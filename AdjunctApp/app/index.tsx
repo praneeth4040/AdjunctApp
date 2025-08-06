@@ -17,6 +17,7 @@ export default function Index() {
       <Link href={'./Login'}>Login</Link>
       <Text>ADJUNCT APP CHECKPOINT.</Text>
         <Link href="/onboard" style={{color:'blue',fontSize:20,fontWeight:'bold'  }}>Onboard</Link>
+        <Link href="/otp" style={{color:'blue',fontSize:20,fontWeight:'bold'}}>otp </Link>
     </View>
   );
 }

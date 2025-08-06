@@ -11,6 +11,14 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CountryPicker } from 'react-native-country-codes-picker';
+import { useRouter } from 'expo-router';
+
+
+ 
+
+  
+
+
 
 const styles = StyleSheet.create({
     safeArea: {
@@ -124,6 +132,11 @@ const Login = () => {
   const [countryCode, setCountryCode] = useState('+91');
   const [phone, setPhone] = useState('');
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  const handleContinue = () => {
+    router.push('/otp'); // ✅ Navigate to OTP screen
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
@@ -183,9 +196,10 @@ const Login = () => {
               <Text style={styles.link}>privacy policy</Text>
             </Text>
 
-            <TouchableOpacity style={styles.button}>
-              <Text style={styles.buttonText}>Continue</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={handleContinue} style={styles.button}>
+  <Text style={styles.buttonText}>Continue</Text>
+</TouchableOpacity>
+
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

@@ -1,0 +1,166 @@
+import React, { useState } from 'react';
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f1dea9',
+  },
+  container: {
+    flex: 1,
+    backgroundColor: '#f1dea9',
+  },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 30,
+    paddingTop: 60,
+  },
+  title: {
+    fontSize: 24,
+    fontFamily: 'serif',
+    textAlign: 'center',
+    marginBottom: 10,
+    color: '#000',
+  },
+  stepContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 30,
+    gap: 10,
+  },
+  stepLine: {
+    height: 2,
+    width: 40,
+    borderRadius: 2,
+  },
+  active: {
+    backgroundColor: '#000',
+  },
+  dimmed: {
+    backgroundColor: '#aaa',
+  },
+  heading: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'left',
+    color: '#000',
+  },
+  subText: {
+    fontSize: 16,
+    color: '#6f634f',
+    marginBottom: 40,
+  },
+  otpInput: {
+    fontSize: 22,
+    color: '#5c5340',
+    fontWeight: '600',
+    letterSpacing: 10,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  underline: {
+    height: 1,
+    backgroundColor: '#000',
+    marginBottom: 30,
+  },
+  bottom: {
+    marginTop: 40,
+    alignItems: 'center',
+    paddingBottom: 20,
+  },
+  terms: {
+    textAlign: 'center',
+    color: '#6f634f',
+    marginBottom: 20,
+  },
+  link: {
+    color: '#000',
+    fontWeight: 'bold',
+  },
+  button: {
+    backgroundColor: '#b2ffe2',
+    paddingVertical: 14,
+    paddingHorizontal: 30,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 5,
+    width: '100%',
+  },
+  buttonText: {
+    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+});
+
+const OTPVerification = () => {
+  const insets = useSafeAreaInsets();
+  const [otp, setOtp] = useState('');
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+      >
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          {/* Top Content */}
+          <View>
+            <Text style={styles.title}>Adjunct</Text>
+
+            <View style={styles.stepContainer}>
+              <View style={[styles.stepLine, styles.active]} />
+              <View style={[styles.stepLine, styles.active]} />
+              <View style={[styles.stepLine, styles.active]} />
+            </View>
+
+            <Text style={styles.heading}>OTP Verification</Text>
+            <Text style={styles.subText}>Enter the 6-digit OTP sent to your number</Text>
+
+            <TextInput
+              style={styles.otpInput}
+              placeholder="------"
+              placeholderTextColor="#5c5340"
+              keyboardType="number-pad"
+              maxLength={6}
+              value={otp}
+              onChangeText={setOtp}
+            />
+            <View style={styles.underline} />
+          </View>
+
+          {/* Bottom Section */}
+          <View style={styles.bottom}>
+            <Text style={styles.terms}>
+              By Clicking, I accept the{' '}
+              <Text style={styles.link}>terms & conditions</Text> &{' '}
+              <Text style={styles.link}>privacy policy</Text>
+            </Text>
+
+            <TouchableOpacity style={styles.button}>
+              <Text style={styles.buttonText}>Get Verified</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+};
+
+export default OTPVerification;
