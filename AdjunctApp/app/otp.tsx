@@ -125,8 +125,8 @@ const OTPVerification = () => {
             <Text style={styles.title}>Adjunct</Text>
 
             <View style={styles.stepContainer}>
-              <View style={[styles.stepLine, styles.active]} />
-              <View style={[styles.stepLine, styles.active]} />
+              <View style={[styles.stepLine, styles.dimmed]} />
+              <View style={[styles.stepLine, styles.dimmed]} />
               <View style={[styles.stepLine, styles.active]} />
             </View>
 
