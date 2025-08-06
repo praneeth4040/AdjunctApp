@@ -1,5 +1,4 @@
 import { Link } from "expo-router";
-import { Link } from "expo-router";
 import { Text, View,StyleSheet } from "react-native";
 
 const style = StyleSheet.create({
