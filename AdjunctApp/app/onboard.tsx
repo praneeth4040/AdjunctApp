@@ -17,7 +17,7 @@ const OnboardingScreen = () => {
 
   const handleGetStarted = () => {
     console.log('Get Started pressed');
-    router.push('./login');
+    router.push('/Login');
   };
 // ✅ Import
 
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    paddingBottom: 30,
+    marginBottom: 10,
   },
   title: {
     fontSize: 24,
