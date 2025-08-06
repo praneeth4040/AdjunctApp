@@ -8,8 +8,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { supabase } from '../lib/supabase'; // Adjust path if needed
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -111,6 +114,29 @@ const styles = StyleSheet.create({
 const OTPVerification = () => {
   const insets = useSafeAreaInsets();
   const [otp, setOtp] = useState('');
+  const router = useRouter();
+  const { phone } = useLocalSearchParams(); // phone comes from login screen
+
+  const handleVerify = async () => {
+    if (otp.length < 6) {
+      Alert.alert('Error', 'Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    const { data, error } = await supabase.auth.verifyOtp({
+      phone: phone as string,
+      token: otp,
+      type: 'sms',
+    });
+
+    if (error) {
+      console.error('OTP Verification Error:', error);
+      Alert.alert('Verification Failed', error.message);
+    } else {
+      console.log('OTP verified. User session:', data);
+      router.replace('/'); // or your main app screen
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
@@ -120,10 +146,8 @@ const OTPVerification = () => {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          {/* Top Content */}
           <View>
             <Text style={styles.title}>Adjunct</Text>
-
             <View style={styles.stepContainer}>
               <View style={[styles.stepLine, styles.dimmed]} />
               <View style={[styles.stepLine, styles.dimmed]} />
@@ -145,7 +169,6 @@ const OTPVerification = () => {
             <View style={styles.underline} />
           </View>
 
-          {/* Bottom Section */}
           <View style={styles.bottom}>
             <Text style={styles.terms}>
               By Clicking, I accept the{' '}
@@ -153,7 +176,7 @@ const OTPVerification = () => {
               <Text style={styles.link}>privacy policy</Text>
             </Text>
 
-            <TouchableOpacity style={styles.button}>
+            <TouchableOpacity onPress={handleVerify} style={styles.button}>
               <Text style={styles.buttonText}>Get Verified</Text>
             </TouchableOpacity>
           </View>
