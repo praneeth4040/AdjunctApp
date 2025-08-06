@@ -8,125 +8,120 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CountryPicker } from 'react-native-country-codes-picker';
 import { useRouter } from 'expo-router';
-
-
- 
-
-  
-
-
+import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
 
 const styles = StyleSheet.create({
-    safeArea: {
-      flex: 1,
-      backgroundColor: '#f1dea9',
-    },
-    container: {
-      flex: 1,
-      backgroundColor: '#f1dea9',
-    },
-    scroll: {
-      flexGrow: 1,
-      justifyContent: 'space-between',
-      paddingHorizontal: 30,
-      paddingTop: 60,
-    },
-    title: {
-      fontSize: 24,
-      fontFamily: 'serif',
-      textAlign: 'center',
-      marginBottom: 10,
-      color: '#000',
-    },
-    stepContainer: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      marginBottom: 30,
-      gap: 10,
-    },
-    stepLine: {
-      height: 2,
-      width: 40,
-      borderRadius: 2,
-    },
-    active: {
-      backgroundColor: '#000',
-    },
-    dimmed: {
-      backgroundColor: '#aaa',
-    },
-    heading: {
-      fontSize: 32,
-      fontWeight: 'bold',
-      textAlign: 'left',
-      color: '#000',
-    },
-    subText: {
-      fontSize: 16,
-      color: '#6f634f',
-      marginBottom: 40,
-    },
-    phoneContainer: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 5,
-    },
-    countryCode: {
-      fontSize: 22,
-      fontWeight: 'bold',
-      color: '#000',
-      marginRight: 10,
-    },
-    phoneInput: {
-      flex: 1,
-      fontSize: 22,
-      color: '#5c5340',
-      fontWeight: '600',
-      letterSpacing: 1,
-    },
-    underline: {
-      height: 1,
-      backgroundColor: '#000',
-      marginBottom: 30,
-    },
-    bottom: {
-      marginTop: 40,
-      alignItems: 'center',
-      paddingBottom: 20,
-    },
-    terms: {
-      textAlign: 'center',
-      color: '#6f634f',
-      marginBottom: 20,
-    },
-    link: {
-      color: '#000',
-      fontWeight: 'bold',
-    },
-    button: {
-      backgroundColor: '#b2ffe2',
-      paddingVertical: 14,
-      paddingHorizontal: 30,
-      borderRadius: 20,
-      shadowColor: '#000',
-      shadowOffset: { width: 1, height: 3 },
-      shadowOpacity: 0.2,
-      shadowRadius: 5,
-      elevation: 5,
-      width: '100%',
-    },
-    buttonText: {
-      textAlign: 'center',
-      fontSize: 24,
-      fontWeight: 'bold',
-      color: '#000',
-    },
-  });
-  
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f1dea9',
+  },
+  container: {
+    flex: 1,
+    backgroundColor: '#f1dea9',
+  },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 30,
+    paddingTop: 60,
+  },
+  title: {
+    fontSize: 24,
+    fontFamily: 'serif',
+    textAlign: 'center',
+    marginBottom: 10,
+    color: '#000',
+  },
+  stepContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 30,
+    gap: 10,
+  },
+  stepLine: {
+    height: 2,
+    width: 40,
+    borderRadius: 2,
+  },
+  active: {
+    backgroundColor: '#000',
+  },
+  dimmed: {
+    backgroundColor: '#aaa',
+  },
+  heading: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'left',
+    color: '#000',
+  },
+  subText: {
+    fontSize: 16,
+    color: '#6f634f',
+    marginBottom: 40,
+  },
+  phoneContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  countryCode: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#000',
+    marginRight: 10,
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 22,
+    color: '#5c5340',
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  underline: {
+    height: 1,
+    backgroundColor: '#000',
+    marginBottom: 30,
+  },
+  bottom: {
+    marginTop: 40,
+    alignItems: 'center',
+    paddingBottom: 20,
+  },
+  terms: {
+    textAlign: 'center',
+    color: '#6f634f',
+    marginBottom: 20,
+  },
+  link: {
+    color: '#000',
+    fontWeight: 'bold',
+  },
+  button: {
+    backgroundColor: '#b2ffe2',
+    paddingVertical: 14,
+    paddingHorizontal: 30,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 5,
+    width: '100%',
+  },
+  buttonText: {
+    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+});
+
 const Login = () => {
   const [showPicker, setShowPicker] = useState(false);
   const [countryCode, setCountryCode] = useState('+91');
@@ -134,8 +129,19 @@ const Login = () => {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const handleContinue = () => {
-    router.push('/otp'); // ✅ Navigate to OTP screen
+  const handleContinue = async () => {
+    const fullPhone = `${countryCode}${phone}`;
+
+    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
+
+    if (error) {
+      console.log(error);
+      Alert.alert('Error', 'Failed to send OTP. Try again.');
+      return;
+    }
+
+    // Navigate to OTP screen with phone number as param
+    router.push({ pathname: '/otp', params: { phone: fullPhone } });
   };
 
   return (
@@ -146,7 +152,6 @@ const Login = () => {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          {/* Top Content */}
           <View>
             <Text style={styles.title}>Adjunct</Text>
 
@@ -176,19 +181,16 @@ const Login = () => {
             <View style={styles.underline} />
           </View>
 
-          {/* Country Picker */}
           <CountryPicker
             show={showPicker}
-            lang="en" // ✅ Add this line
+            lang="en"
             pickerButtonOnPress={(item) => {
-            setCountryCode(item.dial_code);
-            setShowPicker(false);
+              setCountryCode(item.dial_code);
+              setShowPicker(false);
             }}
             onBackdropPress={() => setShowPicker(false)}
-            />
+          />
 
-
-          {/* Bottom Section */}
           <View style={styles.bottom}>
             <Text style={styles.terms}>
               By Clicking , I accept the{' '}
@@ -197,9 +199,8 @@ const Login = () => {
             </Text>
 
             <TouchableOpacity onPress={handleContinue} style={styles.button}>
-  <Text style={styles.buttonText}>Continue</Text>
-</TouchableOpacity>
-
+              <Text style={styles.buttonText}>Continue</Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
