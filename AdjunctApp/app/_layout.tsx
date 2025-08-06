@@ -3,7 +3,7 @@ import { useFonts } from "expo-font";
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from "react";
 
-SplashScreen.preventAutoHideAsync(); // prevent splash screen from hiding early
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -14,17 +14,17 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded) {
-      SplashScreen.hideAsync();  // hide splash screen once fonts are loaded
+      SplashScreen.hideAsync();
     }
   }, [fontsLoaded]);
 
-  if (!fontsLoaded) {
-    return null;   // keep splash screen until fonts are ready
-  }
+  if (!fontsLoaded) return null;
 
   return (
-    <Stack>
-      <Stack.Screen name="index" options={{ headerShown: false }} />
-    </Stack>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+      }}
+    />
   );
 }
