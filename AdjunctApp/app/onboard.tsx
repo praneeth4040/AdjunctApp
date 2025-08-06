@@ -95,11 +95,11 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   appName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#2C2C2C',
-    letterSpacing: 0.5,
-    fontFamily: 'Kreon',
+    fontSize: 24,
+      fontFamily: 'serif',
+      textAlign: 'center',
+      marginBottom: 10,
+      color: '#000'
   },
   indicatorContainer: {
     flexDirection: 'row',
