@@ -1,4 +1,5 @@
 import { Link } from "expo-router";
+import { Link } from "expo-router";
 import { Text, View,StyleSheet } from "react-native";
 
 const style = StyleSheet.create({
@@ -13,6 +14,8 @@ const style = StyleSheet.create({
 export default function Index() {
   return (
     <View style={style.container}>
+      <Text>Edit app/index.tsx to edit this screen.</Text>
+      <Link href={'./Login'}>Login</Link>
       <Text>ADJUNCT APP CHECKPOINT.</Text>
         <Link href="/onboard" style={{color:'blue',fontSize:20,fontWeight:'bold'  }}>Onboard</Link>
     </View>
