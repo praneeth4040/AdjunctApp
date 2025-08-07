@@ -86,16 +86,17 @@ const OnboardingScreen = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#dcd0a8',
     paddingHorizontal: 20,
   },
   header: {
     alignItems: 'center',
     marginBottom: 10,
+    fontFamily:'Kreon-Bold'
   },
   title: {
     fontSize: 24,
-    fontFamily: 'serif', // Or 'Kreon' if you're loading it
+    fontFamily:'Kreon-Bold',
     textAlign: 'center',
     color: '#000',
   },
@@ -123,13 +124,12 @@ const styles = StyleSheet.create({
   },
   heading: {
     fontSize: 32,
-    fontWeight: 'bold',
     color: '#000',
     textAlign: 'left',
     lineHeight: 40,
     marginBottom: 75,
     alignSelf: 'stretch',
-    fontFamily: 'serif', // Or 'Kreon'
+    fontFamily: 'Kreon-Bold', // Or 'Kreon'
   },
   illustrationContainer: {
     backgroundColor: 'transparent',
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
     color: '#6f634f',
     textAlign: 'center',
     lineHeight: 22,
-    fontFamily: 'serif', // Or 'Kreon'
+    fontFamily: 'Kreon-Regular', // Or 'Kreon'
   },
   button: {
     backgroundColor: '#b2ffe2',
@@ -168,9 +168,8 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 24,
-    fontWeight: 'bold',
     color: '#000',
-    fontFamily: 'serif', // Or 'Kreon'
+    fontFamily: 'Kreon-Bold', // Or 'Kreon'
   },
   arrow: {
     fontSize: 24,

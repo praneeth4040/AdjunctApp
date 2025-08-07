@@ -17,11 +17,11 @@ import { supabase } from '../lib/supabase'; // Adjust path if needed
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#DCD0A8',
   },
   container: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#DCD0A8',
   },
   scroll: {
     flexGrow: 1,
@@ -31,7 +31,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontFamily: 'serif',
+    fontFamily: 'Kreon-Bold',
     textAlign: 'center',
     marginBottom: 10,
     color: '#000',
@@ -55,17 +55,19 @@ const styles = StyleSheet.create({
   },
   heading: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontFamily: 'Kreon-Bold',
     textAlign: 'left',
     color: '#000',
   },
   subText: {
     fontSize: 16,
+    fontFamily: 'Kreon-Bold',
     color: '#6f634f',
     marginBottom: 40,
   },
   otpInput: {
     fontSize: 22,
+    fontFamily: 'Kreon-Regular',
     color: '#5c5340',
     fontWeight: '600',
     letterSpacing: 10,
@@ -84,12 +86,14 @@ const styles = StyleSheet.create({
   },
   terms: {
     textAlign: 'center',
+    fontFamily: 'Kreon-Regular',
     color: '#6f634f',
     marginBottom: 20,
   },
   link: {
     color: '#000',
     fontWeight: 'bold',
+    fontFamily: 'Kreon-Regular',
   },
   button: {
     backgroundColor: '#b2ffe2',
@@ -106,8 +110,8 @@ const styles = StyleSheet.create({
   buttonText: {
     textAlign: 'center',
     fontSize: 24,
-    fontWeight: 'bold',
     color: '#000',
+    fontFamily: 'Kreon-Bold',
   },
 });
 
