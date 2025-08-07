@@ -8,17 +8,20 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { supabase } from '../lib/supabase'; // Adjust path if needed
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#DCD0A8',
   },
   container: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#DCD0A8',
   },
   scroll: {
     flexGrow: 1,
@@ -28,7 +31,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontFamily: 'serif',
+    fontFamily: 'Kreon-Bold',
     textAlign: 'center',
     marginBottom: 10,
     color: '#000',
@@ -52,17 +55,19 @@ const styles = StyleSheet.create({
   },
   heading: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontFamily: 'Kreon-Bold',
     textAlign: 'left',
     color: '#000',
   },
   subText: {
     fontSize: 16,
+    fontFamily: 'Kreon-Bold',
     color: '#6f634f',
     marginBottom: 40,
   },
   otpInput: {
     fontSize: 22,
+    fontFamily: 'Kreon-Regular',
     color: '#5c5340',
     fontWeight: '600',
     letterSpacing: 10,
@@ -81,12 +86,14 @@ const styles = StyleSheet.create({
   },
   terms: {
     textAlign: 'center',
+    fontFamily: 'Kreon-Regular',
     color: '#6f634f',
     marginBottom: 20,
   },
   link: {
     color: '#000',
     fontWeight: 'bold',
+    fontFamily: 'Kreon-Regular',
   },
   button: {
     backgroundColor: '#b2ffe2',
@@ -103,14 +110,37 @@ const styles = StyleSheet.create({
   buttonText: {
     textAlign: 'center',
     fontSize: 24,
-    fontWeight: 'bold',
     color: '#000',
+    fontFamily: 'Kreon-Bold',
   },
 });
 
 const OTPVerification = () => {
   const insets = useSafeAreaInsets();
   const [otp, setOtp] = useState('');
+  const router = useRouter();
+  const { phone } = useLocalSearchParams(); // phone comes from login screen
+
+  const handleVerify = async () => {
+    if (otp.length < 6) {
+      Alert.alert('Error', 'Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    const { data, error } = await supabase.auth.verifyOtp({
+      phone: phone as string,
+      token: otp,
+      type: 'sms',
+    });
+
+    if (error) {
+      console.error('OTP Verification Error:', error);
+      Alert.alert('Verification Failed', error.message);
+    } else {
+      console.log('OTP verified. User session:', data);
+      router.replace('/'); // or your main app screen
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
@@ -120,10 +150,8 @@ const OTPVerification = () => {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          {/* Top Content */}
           <View>
             <Text style={styles.title}>Adjunct</Text>
-
             <View style={styles.stepContainer}>
               <View style={[styles.stepLine, styles.dimmed]} />
               <View style={[styles.stepLine, styles.dimmed]} />
@@ -145,7 +173,6 @@ const OTPVerification = () => {
             <View style={styles.underline} />
           </View>
 
-          {/* Bottom Section */}
           <View style={styles.bottom}>
             <Text style={styles.terms}>
               By Clicking, I accept the{' '}
@@ -153,7 +180,7 @@ const OTPVerification = () => {
               <Text style={styles.link}>privacy policy</Text>
             </Text>
 
-            <TouchableOpacity style={styles.button}>
+            <TouchableOpacity onPress={handleVerify} style={styles.button}>
               <Text style={styles.buttonText}>Get Verified</Text>
             </TouchableOpacity>
           </View>
