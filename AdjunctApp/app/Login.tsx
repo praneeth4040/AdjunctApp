@@ -18,11 +18,11 @@ import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#DCD0A8',
   },
   container: {
     flex: 1,
-    backgroundColor: '#f1dea9',
+    backgroundColor: '#DCD0A8',
   },
   scroll: {
     flexGrow: 1,
@@ -32,7 +32,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontFamily: 'serif',
+    fontFamily: 'Kreon-Bold',
     textAlign: 'center',
     marginBottom: 10,
     color: '#000',
@@ -56,13 +56,14 @@ const styles = StyleSheet.create({
   },
   heading: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontFamily:'Kreon-Bold',
     textAlign: 'left',
     color: '#000',
   },
   subText: {
     fontSize: 16,
     color: '#6f634f',
+    fontFamily:'Kreon-Regular',
     marginBottom: 40,
   },
   phoneContainer: {
@@ -72,7 +73,7 @@ const styles = StyleSheet.create({
   },
   countryCode: {
     fontSize: 22,
-    fontWeight: 'bold',
+    fontFamily:'Kreon-SemiBold',
     color: '#000',
     marginRight: 10,
   },
@@ -80,7 +81,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 22,
     color: '#5c5340',
-    fontWeight: '600',
+    fontFamily:'Kreon-Regular',
     letterSpacing: 1,
   },
   underline: {
@@ -96,11 +97,12 @@ const styles = StyleSheet.create({
   terms: {
     textAlign: 'center',
     color: '#6f634f',
+    fontFamily:'Kreon-Regular',
     marginBottom: 20,
   },
   link: {
     color: '#000',
-    fontWeight: 'bold',
+    fontFamily:'Kreon-SemiBold'
   },
   button: {
     backgroundColor: '#b2ffe2',
@@ -117,7 +119,7 @@ const styles = StyleSheet.create({
   buttonText: {
     textAlign: 'center',
     fontSize: 24,
-    fontWeight: 'bold',
+    fontFamily:'Kreon-Bold',  
     color: '#000',
   },
 });

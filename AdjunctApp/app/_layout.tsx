@@ -1,45 +1,42 @@
 import { Stack, useRouter } from "expo-router";
 import { useFonts } from "expo-font";
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase"; // 🔁 Adjust path if needed
+import { useEffect, useCallback } from "react";
+import { supabase } from "../lib/supabase"; // ✅ Adjust if needed
 
-SplashScreen.preventAutoHideAsync(); // Prevent splash auto-hide
+SplashScreen.preventAutoHideAsync(); // Don’t auto-hide until ready
 
 export default function RootLayout() {
+  const router = useRouter();
+
   const [fontsLoaded] = useFonts({
     'Kreon-Regular': require('../assets/fonts/Kreon-Regular.ttf'),
     'Kreon-Bold': require('../assets/fonts/Kreon-Bold.ttf'),
     'Kreon-SemiBold': require('../assets/fonts/Kreon-SemiBold.ttf'),
   });
 
-  const [checkingSession, setCheckingSession] = useState(true);
-  const router = useRouter();
-
-  useEffect(() => {
-    const checkSession = async () => {
+  const onLayoutRootView = useCallback(async () => {
+    if (fontsLoaded) {
       const {
         data: { session },
-        error,
       } = await supabase.auth.getSession();
 
       if (session) {
-        // ✅ Already logged in
-        router.replace('/'); // 👉 Change to your main screen
+        router.replace('/'); // ✅ Change to home or wherever
       } else {
-        router.replace('/onboard');
+        router.replace('/');
       }
 
-      setCheckingSession(false);
-      SplashScreen.hideAsync(); // ⏱️ Hide splash once done
-    };
-
-    if (fontsLoaded) {
-      checkSession();
+      await SplashScreen.hideAsync(); // 🔐 Only hide once nav is complete
     }
   }, [fontsLoaded]);
 
-  if (!fontsLoaded || checkingSession) return null;
+  useEffect(() => {
+    onLayoutRootView();
+  }, [onLayoutRootView]);
+
+  // Show nothing until fonts loaded & nav handled
+  if (!fontsLoaded) return null;
 
   return (
     <Stack screenOptions={{ headerShown: false }} />
