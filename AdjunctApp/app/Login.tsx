@@ -13,7 +13,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CountryPicker } from 'react-native-country-codes-picker';
 import { useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
+// import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
 
 const styles = StyleSheet.create({
   safeArea: {
