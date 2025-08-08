@@ -140,7 +140,7 @@ const OTPVerification = () => {
       console.log('OTP verified. User session:', data);
       router.push({
         pathname: '/home',
-        params: { phone: phone },
+        // params: { phone: phone },
       });// or your main app screen
     }
   };
