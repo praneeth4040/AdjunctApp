@@ -5,6 +5,7 @@ import * as Contacts from 'expo-contacts';
 import * as MediaLibrary from 'expo-media-library';
 import { Camera } from 'expo-camera';
 import * as AV from 'expo-av';
+import { router } from 'expo-router';
 
 const PermissionsScreen = () => {
   const [permissions, setPermissions] = useState({
@@ -38,6 +39,7 @@ const PermissionsScreen = () => {
       const allGranted = Object.values(granted).every((val)=>val===true);
       if(allGranted){
         Alert.alert('Permissions',"All permissions are granted successfully")
+        router.replace('/profileSetup')
       }
     } catch (err) {
       console.error('Permission error:', err);

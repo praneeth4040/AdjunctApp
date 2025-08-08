@@ -22,7 +22,7 @@ export default function RootLayout() {
       } = await supabase.auth.getSession();
 
       if (session) {
-        router.replace('/'); // ✅ Change to home or wherever
+        router.replace('/home/chats'); // ✅ Change to home or wherever
       } else {
         router.replace('/');
       }

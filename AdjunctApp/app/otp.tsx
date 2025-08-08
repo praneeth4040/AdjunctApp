@@ -138,10 +138,7 @@ const OTPVerification = () => {
       Alert.alert('Verification Failed', error.message);
     } else {
       console.log('OTP verified. User session:', data);
-      router.push({
-        pathname: '/home',
-        // params: { phone: phone },
-      });// or your main app screen
+      router.replace('/permissions'); // or your main app screen
     }
   };
 

@@ -20,7 +20,9 @@ export default function Index() {
         <Link href="/otp" style={{color:'blue',fontSize:20,fontWeight:'bold'}}>otp </Link>
         <Link href="/permissions">Permissions</Link>
         <Link href='/profileSetup'>Profile Setup</Link>
+
         <Link href='/home'>home</Link>
+        <Link href={'/home/chats'}>Home Praneeth</Link>
     </View>
   );
 }
