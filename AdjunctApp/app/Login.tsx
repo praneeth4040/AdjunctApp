@@ -143,7 +143,11 @@ const Login = () => {
     }
 
     // Navigate to OTP screen with phone number as param
-    router.push({ pathname: '/otp', params: { phone: fullPhone } });
+    router.push({
+      pathname: '/otp',
+      params: { phone: fullPhone }
+    });
+    
   };
 
   return (

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase'; // Adjust path if needed
+import { supabase } from '../lib/supabase'
 
 const styles = StyleSheet.create({
   safeArea: {
