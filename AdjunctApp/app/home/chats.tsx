@@ -1,5 +1,5 @@
 // home/chats.tsx
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,45 +11,133 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-
-const chats = [
-  {
-    id: "1",
-    name: "Alice",
-    lastMessage: "Hey, what's up?",
-    time: "10:30 AM",
-    profileImage: "https://randomuser.me/api/portraits/women/1.jpg",
-  },
-  {
-    id: "2",
-    name: "Bob",
-    lastMessage: "Got it!",
-    time: "Yesterday",
-    profileImage: "https://randomuser.me/api/portraits/men/2.jpg",
-  },
-  {
-    id: "3",
-    name: "Charlie",
-    lastMessage: "See you soon.",
-    time: "Mon",
-    profileImage: "https://randomuser.me/api/portraits/men/3.jpg",
-  },
-  {
-    id: "4",
-    name: "David",
-    lastMessage: "Thanks!",
-    time: "Sun",
-    profileImage: "https://randomuser.me/api/portraits/men/4.jpg",
-  },
-];
+import { supabase } from "../../lib/supabase";
+import { useRouter } from "expo-router"; // ✅ navigation
 
 export default function ChatsScreen() {
-  const renderChatItem = ({ item }) => (
-    <TouchableOpacity style={styles.chatItem}>
-      <Image source={{ uri: item.profileImage }} style={styles.avatar} />
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [userName, setUserName] = useState<string>("");
+  const [phoneNumber, setPhoneNumber] = useState<string>("");
+  const [profilePicture, setProfilePicture] = useState<string>("");
+
+  const router = useRouter(); // ✅ initialize router
+
+  useEffect(() => {
+    fetchUser();
+  }, []);
+
+  // Step 1: Fetch current user info
+  const fetchUser = async () => {
+    try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("name,phone_number,profile_picture")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) throw error;
+
+      setUserName(data?.name || "User");
+      setPhoneNumber(data?.phone_number || "");
+      setProfilePicture(data?.profile_picture || "");
+
+      if (data?.phone_number) {
+        fetchConversations(data.phone_number);
+      }
+    } catch (err) {
+      console.error("Error fetching user info:", err);
+    }
+  };
+
+  // Step 2: Fetch latest conversations
+  const fetchConversations = async (currentUserPhone: string) => {
+    try {
+      const { data: messages, error } = await supabase
+        .from("messages")
+        .select("*")
+        .or(`sender_phone.eq.${currentUserPhone},receiver_phone.eq.${currentUserPhone}`)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      const latestMessagesMap = new Map();
+
+      messages.forEach((msg) => {
+        const partnerPhone =
+          msg.sender_phone === currentUserPhone
+            ? msg.receiver_phone
+            : msg.sender_phone;
+
+        if (!latestMessagesMap.has(partnerPhone)) {
+          latestMessagesMap.set(partnerPhone, msg);
+        }
+      });
+
+      const conversationsArray = Array.from(latestMessagesMap.values());
+
+      const partnerPhones = Array.from(latestMessagesMap.keys());
+
+      if (partnerPhones.length === 0) {
+        setConversations([]);
+        return;
+      }
+
+      const { data: partners, error: partnersError } = await supabase
+        .from("profiles")
+        .select("name, phone_number, profile_picture")
+        .in("phone_number", partnerPhones);
+
+      if (partnersError) throw partnersError;
+
+      const conversationsWithInfo = conversationsArray.map((msg) => {
+        const partnerPhone =
+          msg.sender_phone === currentUserPhone
+            ? msg.receiver_phone
+            : msg.sender_phone;
+
+        const partner = partners.find((p) => p.phone_number === partnerPhone);
+
+        return {
+          id: msg.id,
+          phoneNumber: partnerPhone, // ✅ will be used for navigation
+          name: partner?.name || partnerPhone, // show phone if no name
+          profileImage: partner?.profile_picture || "",
+          lastMessage: msg.message,
+          time: new Date(msg.created_at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        };
+      });
+
+      setConversations(conversationsWithInfo);
+    } catch (err) {
+      console.error("Error fetching conversations:", err);
+    }
+  };
+
+  const renderChatItem = ({ item }: { item: any }) => (
+    <TouchableOpacity
+      style={styles.chatItem}
+      onPress={() => router.push(`/chats/${item.phoneNumber}`)} // ✅ navigate
+    >
+      <Image
+        source={{ uri: item.profileImage || "https://via.placeholder.com/50" }}
+        style={styles.avatar}
+      />
       <View style={styles.chatInfo}>
         <Text style={styles.chatName}>{item.name}</Text>
-        <Text style={styles.chatMessage}>{item.lastMessage}</Text>
+        <Text style={styles.chatMessage} numberOfLines={1}>
+          {item.lastMessage}
+        </Text>
       </View>
       <Text style={styles.chatTime}>{item.time}</Text>
     </TouchableOpacity>
@@ -63,7 +151,9 @@ export default function ChatsScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>Good morning</Text>
-          <Text style={styles.username}>Praneeth</Text>
+          <Text style={styles.username}>
+            {userName || "Loading..."}
+          </Text>
         </View>
         <View style={styles.headerIcons}>
           <Ionicons
@@ -78,14 +168,19 @@ export default function ChatsScreen() {
         </View>
       </View>
 
-      {/* Chats Section - single view that holds gray background and rounded top corners */}
+      {/* Chats Section */}
       <View style={styles.chatsSection}>
         <FlatList
-          data={chats}
+          data={conversations}
           renderItem={renderChatItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
           contentContainerStyle={{ padding: 16, paddingTop: 24 }}
           showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>
+              No conversations yet — start a chat!
+            </Text>
+          }
         />
       </View>
     </SafeAreaView>
@@ -95,7 +190,7 @@ export default function ChatsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#dcd0a8", // gold header background
+    backgroundColor: "#dcd0a8",
   },
   header: {
     paddingHorizontal: 20,
@@ -163,5 +258,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#999",
     fontFamily: "Kreon-Regular",
+  },
+  emptyText: {
+    textAlign: "center",
+    color: "#888",
+    marginTop: 40,
   },
 });
