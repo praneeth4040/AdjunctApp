@@ -13,7 +13,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CountryPicker } from 'react-native-country-codes-picker';
 import { useRouter } from 'expo-router';
-// import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
+import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -134,16 +134,20 @@ const Login = () => {
   const handleContinue = async () => {
     const fullPhone = `${countryCode}${phone}`;
 
-    // const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
+    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
 
-    // if (error) {
-    //   console.log(error);
-    //   Alert.alert('Error', 'Failed to send OTP. Try again.');
-    //   return;
-    // }
+    if (error) {
+      console.log(error);
+      Alert.alert('Error', 'Failed to send OTP. Try again.');
+      return;
+    }
 
     // Navigate to OTP screen with phone number as param
-    router.push({ pathname: '/otp', params: { phone: fullPhone } });
+    router.push({
+      pathname: '/otp',
+      params: { phone: fullPhone }
+    });
+    
   };
 
   return (

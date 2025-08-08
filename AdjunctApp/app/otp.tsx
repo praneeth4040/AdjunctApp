@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase'; // Adjust path if needed
+import { supabase } from '../lib/supabase'
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -138,7 +138,10 @@ const OTPVerification = () => {
       Alert.alert('Verification Failed', error.message);
     } else {
       console.log('OTP verified. User session:', data);
-      router.replace('/'); // or your main app screen
+      router.push({
+        pathname: '/home',
+        params: { phone: phone },
+      });// or your main app screen
     }
   };
 
