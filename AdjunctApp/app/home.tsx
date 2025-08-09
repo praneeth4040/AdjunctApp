@@ -1,58 +1,81 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, TextInput, Button, FlatList, StyleSheet } from 'react-native';
-import { supabase } from '../lib/supabase'; // Adjust your path
-import { Session, User } from '@supabase/supabase-js';
+import {
+  View,
+  Text,
+  TextInput,
+  Button,
+  FlatList,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
+import { supabase } from '../lib/supabase'
 
-export default function Home() {
-  const [session, setSession] = useState<Session | null>(null);
+export default function ChatScreen() {
+  const { id } = useLocalSearchParams(); // receiver's phone number
+  const [session, setSession] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
-  const [receiverPhone, setReceiverPhone] = useState('');
-  const messageRef = useRef<any>(null);
+  const messageRef = useRef<FlatList<any>>(null);
 
+  // Auth Session listener
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    const getSession = async () => {
+      const { data } = await supabase.auth.getSession();
       setSession(data.session);
-    });
+    };
 
-    const subscription = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    getSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
     });
 
     return () => {
-      subscription.data?.subscription.unsubscribe();
+      authListener?.subscription.unsubscribe();
     };
   }, []);
 
-  const senderPhone = session?.user?.phone || '';
+  const senderPhone = session?.user?.phone ?? '';
+  const receiverPhone = id as string;
 
-  // Fetch existing messages
+  // Fetch and listen to messages
   useEffect(() => {
-    if (!senderPhone) return;
+    if (!senderPhone || !receiverPhone) return;
 
     const fetchMessages = async () => {
       const { data, error } = await supabase
         .from('messages')
         .select('*')
-        .or(`sender_phone.eq.${senderPhone},receiver_phone.eq.${senderPhone}`)
+        .or(
+          `and(sender_phone.eq.${senderPhone},receiver_phone.eq.${receiverPhone}),and(sender_phone.eq.${receiverPhone},receiver_phone.eq.${senderPhone})`
+        )
         .order('created_at', { ascending: true });
 
-      if (error) console.error('Fetch error:', error);
-      else setMessages(data);
+      if (error) {
+        console.error('Fetch error:', error);
+      } else {
+        setMessages(data);
+      }
     };
 
     fetchMessages();
 
     const channel = supabase
-      .channel('message-listener')
+      .channel('messages-channel')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
         (payload) => {
           const newMessage = payload.new;
           if (
-            newMessage.sender_phone === senderPhone ||
-            newMessage.receiver_phone === senderPhone
+            (newMessage.sender_phone === senderPhone && newMessage.receiver_phone === receiverPhone) ||
+            (newMessage.sender_phone === receiverPhone && newMessage.receiver_phone === senderPhone)
           ) {
             setMessages((prev) => [...prev, newMessage]);
           }
@@ -63,15 +86,15 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [senderPhone]);
+  }, [senderPhone, receiverPhone]);
 
   const sendMessage = async () => {
-    if (!input || !receiverPhone || !senderPhone) return;
+    if (!input.trim() || !senderPhone || !receiverPhone) return;
 
     const { error } = await supabase.from('messages').insert({
       sender_phone: senderPhone,
       receiver_phone: receiverPhone,
-      message: input,
+      message: input.trim(),
     });
 
     if (error) {
@@ -82,26 +105,25 @@ export default function Home() {
   };
 
   const renderItem = ({ item }: { item: any }) => (
-    <Text style={item.sender_phone === senderPhone ? styles.myMsg : styles.theirMsg}>
+    <Text
+      style={item.sender_phone === senderPhone ? styles.myMsg : styles.theirMsg}
+    >
       {item.message}
     </Text>
   );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Real-time Chat</Text>
-      <TextInput
-        placeholder="Receiver phone number"
-        style={styles.input}
-        value={receiverPhone}
-        onChangeText={setReceiverPhone}
-        keyboardType="phone-pad"
-      />
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.container}
+    >
+      <Text style={styles.title}>Chat with {receiverPhone}</Text>
       <FlatList
         ref={messageRef}
         data={messages}
         renderItem={renderItem}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.id?.toString()}
+        contentContainerStyle={{ flexGrow: 1 }}
       />
       <TextInput
         placeholder="Type your message..."
@@ -110,31 +132,43 @@ export default function Home() {
         onChangeText={setInput}
       />
       <Button title="Send" onPress={sendMessage} />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20, flex: 1 },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 10 },
+  container: {
+    padding: 20,
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    alignSelf: 'center',
+  },
   input: {
     borderWidth: 1,
     padding: 10,
     borderRadius: 6,
-    marginVertical: 5,
+    marginVertical: 10,
+    borderColor: '#ccc',
   },
   myMsg: {
     alignSelf: 'flex-end',
     backgroundColor: '#DCF8C6',
     padding: 10,
-    margin: 5,
+    marginVertical: 4,
     borderRadius: 8,
+    maxWidth: '80%',
   },
   theirMsg: {
     alignSelf: 'flex-start',
     backgroundColor: '#ECECEC',
     padding: 10,
-    margin: 5,
-    borderRadius: 8
+    marginVertical: 4,
+    borderRadius: 8,
+    maxWidth: '80%',
   },
 });

@@ -1,1 +1,13 @@
 flask
+python-dotenv
+requests
+aiohttp
+google-genai
+supabase
+dateparser
+werkzeug
+cohere
+google-auth
+google-auth-oauthlib
+google-api-python-client
+flask_cors
