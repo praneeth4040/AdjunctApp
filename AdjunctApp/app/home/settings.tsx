@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  SafeAreaView,
 } from 'react-native';
 import { Ionicons, AntDesign } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
@@ -26,7 +27,10 @@ function Settings() {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
         if (authError) throw authError;
         if (!user) return;
 
@@ -49,36 +53,36 @@ function Settings() {
     fetchUser();
   }, []);
 
-const uploadImageToSupabase = async (uri: string): Promise<string | null> => {
-  try {
-    const fileExt = uri.split('.').pop();
-    const fileName = `${userId}_${Date.now()}.${fileExt}`;
-    const filePath = `${fileName}`;
+  const uploadImageToSupabase = async (uri: string): Promise<string | null> => {
+    try {
+      const fileExt = uri.split('.').pop();
+      const fileName = `${userId}_${Date.now()}.${fileExt}`;
+      const filePath = `${fileName}`;
 
-    const base64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const fileBytes = Buffer.from(base64, 'base64');
-
-    const { error: uploadError } = await supabase.storage
-      .from('profile-pictures')
-      .upload(filePath, fileBytes, {
-        contentType: `image/${fileExt}`,
-        upsert: true,
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
       });
+      const fileBytes = Buffer.from(base64, 'base64');
 
-    if (uploadError) throw uploadError;
+      const { error: uploadError } = await supabase.storage
+        .from('profile-pictures')
+        .upload(filePath, fileBytes, {
+          contentType: `image/${fileExt}`,
+          upsert: true,
+        });
 
-    const { data: publicURLData } = supabase.storage
-      .from('profile-pictures')
-      .getPublicUrl(filePath);
+      if (uploadError) throw uploadError;
 
-    return publicURLData.publicUrl;
-  } catch (err) {
-    console.error('Image upload error:', err);
-    return null;
-  }
-};
+      const { data: publicURLData } = supabase.storage
+        .from('profile-pictures')
+        .getPublicUrl(filePath);
+
+      return publicURLData.publicUrl;
+    } catch (err) {
+      console.error('Image upload error:', err);
+      return null;
+    }
+  };
 
   const handleSave = async () => {
     if (!userId) return;
@@ -128,76 +132,104 @@ const uploadImageToSupabase = async (uri: string): Promise<string | null> => {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContainer}>
-      <View style={styles.card}>
-        <TouchableOpacity onPress={editing ? handlePickImage : undefined} style={styles.imageWrapper}>
-          <Image
-            source={{ uri: profilePicture || 'https://via.placeholder.com/150' }}
-            style={styles.profileImage}
-          />
-          {editing && (
-            <View style={styles.editIcon}>
-              <Ionicons name="camera" size={18} color="#fff" />
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.card}>
+          <TouchableOpacity
+            onPress={editing ? handlePickImage : undefined}
+            style={styles.imageWrapper}
+          >
+            <Image
+              source={{ uri: profilePicture || 'https://via.placeholder.com/150' }}
+              style={styles.profileImage}
+            />
+            {editing && (
+              <View style={styles.editIcon}>
+                <Ionicons name="camera" size={18} color="#fff" />
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {editing ? (
+            <TextInput
+              value={userName}
+              onChangeText={setUserName}
+              placeholder="Your Name"
+              style={styles.nameInput}
+              autoFocus
+            />
+          ) : (
+            <View style={styles.nameRow}>
+              <Text style={styles.nameText}>{userName}</Text>
+              <TouchableOpacity onPress={() => setEditing(true)}>
+                <Ionicons
+                  name="pencil"
+                  size={18}
+                  color="#4A5568"
+                  style={styles.pencilIcon}
+                />
+              </TouchableOpacity>
             </View>
           )}
-        </TouchableOpacity>
 
-        {editing ? (
-          <TextInput
-            value={userName}
-            onChangeText={setUserName}
-            placeholder="Your Name"
-            style={styles.nameInput}
-            autoFocus
-          />
-        ) : (
-          <View style={styles.nameRow}>
-            <Text style={styles.nameText}>{userName}</Text>
-            <TouchableOpacity onPress={() => setEditing(true)}>
-              <Ionicons name="pencil" size={18} color="#4A5568" style={styles.pencilIcon} />
+          {phoneNumber ? <Text style={styles.phoneText}>{phoneNumber}</Text> : null}
+
+          <TouchableOpacity
+            style={styles.googleButton}
+            onPress={() =>
+              Alert.alert('Coming soon', 'Google authentication will be available soon!')
+            }
+          >
+            <AntDesign
+              name="google"
+              size={20}
+              color="#EA4335"
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.googleButtonText}>Connect with Google</Text>
+          </TouchableOpacity>
+
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.primaryButton, !editing && styles.disabledButton]}
+              onPress={handleSave}
+              disabled={!editing || loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Save</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+              <Text style={styles.logoutButtonText}>Log Out</Text>
             </TouchableOpacity>
           </View>
-        )}
-
-        {phoneNumber ? <Text style={styles.phoneText}>{phoneNumber}</Text> : null}
-
-        <TouchableOpacity
-          style={styles.googleButton}
-          onPress={() => Alert.alert('Coming soon', 'Google authentication will be available soon!')}
-        >
-          <AntDesign name="google" size={20} color="#EA4335" style={{ marginRight: 8 }} />
-          <Text style={styles.googleButtonText}>Connect with Google</Text>
-        </TouchableOpacity>
-
-        <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={[styles.primaryButton, !editing && styles.disabledButton]}
-            onPress={handleSave}
-            disabled={!editing || loading}
-          >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Save</Text>}
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Text style={styles.logoutButtonText}>Log Out</Text>
-          </TouchableOpacity>
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#DCD0A8',
+  },
   scrollContainer: {
     flexGrow: 1,
-    backgroundColor: '#DCD0A8',
     padding: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 20,
     alignItems: 'center',
+    width: '100%',
+    maxWidth: 400,
     shadowColor: '#000',
     shadowOpacity: 0.05,
     shadowRadius: 10,
