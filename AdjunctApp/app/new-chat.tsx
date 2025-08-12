@@ -1,215 +1,164 @@
-// app/new-chat.tsx
-import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  Image,
-  StyleSheet,
-  ActivityIndicator,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import * as Contacts from "expo-contacts";
-import { supabase } from "../lib/supabase";
-import { useRouter } from "expo-router";
+import React, { useEffect, useState } from 'react';
+import * as Contacts from 'expo-contacts';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { supabase } from '../lib/supabase';
+import { useRouter } from 'expo-router';
 
 type ContactItem = {
   id: string;
   name: string;
   phoneNumbers: string[];
-  profile_picture: string | null;
   isUser: boolean;
 };
 
-/**
- * Normalize phone numbers to DB format:
- * - Remove all non-digits (including +)
- * - If 10 digits → prepend 91
- * - If starts with 91 and has 12 digits → keep
- */
-const normalizePhoneNumber = (num: string, defaultCountryCode = "91") => {
-  let cleaned = num.replace(/\D/g, ""); // only digits
-
-  if (cleaned.length === 10) {
-    return defaultCountryCode + cleaned; // local number
-  }
-  if (cleaned.startsWith(defaultCountryCode) && cleaned.length === 12) {
-    return cleaned; // already formatted
-  }
-  return cleaned; // fallback for international numbers
-};
-
-/** Utility: Split array into chunks */
-const chunkArray = <T,>(arr: T[], size: number): T[][] => {
-  const result: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    result.push(arr.slice(i, i + size));
-  }
-  return result;
-};
-
-export default function NewChatScreen() {
+export default function NewChat() {
   const [contacts, setContacts] = useState<ContactItem[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
-    fetchContacts();
+    (async () => {
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status === 'granted') {
+        const { data } = await Contacts.getContactsAsync({
+          fields: [Contacts.Fields.PhoneNumbers],
+        });
+
+        if (data.length > 0) {
+          const normalizedNumbers = data
+            .flatMap((c) => c.phoneNumbers?.map((p) => normalizePhone(p.number)) || [])
+            .filter(Boolean);
+
+          const { data: existingUsers, error } = await supabase
+            .from('profiles')
+            .select('phone_number')
+            .in('phone_number', normalizedNumbers);
+
+          if (error) {
+            console.error('Supabase error:', error);
+            setLoading(false);
+            return;
+          }
+
+          const matchedNumbers = (existingUsers || []).map((u) => u.phone_number);
+
+          const allContacts: ContactItem[] = data.map((contact) => ({
+            id: contact.id ?? '',
+            name: contact.name || 'Unknown',
+            phoneNumbers: (contact.phoneNumbers || []).map((p) => normalizePhone(p.number)),
+            isUser: (contact.phoneNumbers || []).some((p) =>
+              matchedNumbers.includes(normalizePhone(p.number))
+            ),
+          }));
+
+          // Sort: users first, then non-users
+          const sortedContacts = [
+            ...allContacts.filter((c) => c.isUser),
+            ...allContacts.filter((c) => !c.isUser),
+          ];
+
+          setContacts(sortedContacts);
+        }
+      }
+      setLoading(false);
+    })();
   }, []);
 
-  const fetchContacts = async () => {
-    try {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status !== "granted") {
-        alert("Contacts permission is required");
-        setLoading(false);
-        return;
+  const renderItem = ({ item, index }: { item: ContactItem; index: number }) => {
+    const prevItem = contacts[index - 1];
+    const showInviteHeader = index > 0 && prevItem?.isUser && !item.isUser;
+
+    const handlePress = () => {
+      if (item.isUser && item.phoneNumbers.length > 0) {
+        router.push(`/chats/${item.phoneNumbers[0]}`);
       }
-
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers],
-      });
-
-      if (!data || data.length === 0) {
-        setContacts([]);
-        setLoading(false);
-        return;
-      }
-
-      // Normalize & deduplicate numbers (no +, DB format)
-      const allNumbers = data.flatMap((contact) =>
-        contact.phoneNumbers
-          ?.map((pn) =>
-            pn.number ? normalizePhoneNumber(pn.number) : null
-          )
-          .filter((num): num is string => !!num) || []
-      );
-
-      const uniqueNumbers = Array.from(new Set(allNumbers));
-
-      console.log("Unique normalized numbers (query format):", uniqueNumbers);
-
-      // Query Supabase in chunks
-      let matchedUsers: any[] = [];
-      for (const chunk of chunkArray(uniqueNumbers, 100)) {
-        const { data: users, error } = await supabase
-          .from("profiles")
-          .select("name, phone_number, profile_picture")
-          .in("phone_number", chunk);
-
-        if (error) {
-          console.error("Supabase error:", error);
-        }
-        if (users) {
-          console.log("Matched from Supabase:", users);
-          matchedUsers.push(...users);
-        }
-      }
-
-      // Merge contacts with matched users
-      const merged = data.map((contact) => {
-        const normalized = contact.phoneNumbers
-          ?.map((pn) =>
-            pn.number ? normalizePhoneNumber(pn.number) : null
-          )
-          .filter((num): num is string => !!num) || [];
-
-        const match = matchedUsers.find((u) =>
-          normalized.includes(u.phone_number)
-        );
-
-        return {
-          id: contact.id,
-          name: contact.name || "Unknown",
-          phoneNumbers: normalized,
-          profile_picture: match?.profile_picture || null,
-          isUser: !!match,
-        } as ContactItem;
-      });
-
-      // Sort: Adjunct users first
-      merged.sort((a, b) => Number(b.isUser) - Number(a.isUser));
-
-      setContacts(merged);
-    } catch (err) {
-      console.error("Error loading contacts:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderContact = ({ item }: { item: ContactItem }) => {
-    const firstNumber = item.phoneNumbers?.[0] || "";
+    };
 
     return (
-      <TouchableOpacity
-        style={[styles.contactItem, !item.isUser && styles.disabledContact]}
-        disabled={!item.isUser}
-        onPress={() => {
-          if (item.isUser && firstNumber) {
-            router.push(`/chats/${firstNumber}`);
-          }
-        }}
-      >
-        {item.profile_picture ? (
-          <Image source={{ uri: item.profile_picture }} style={styles.avatar} />
-        ) : (
-          <View style={styles.defaultAvatar}>
-            <Text style={{ color: "#555" }}>
-              {item.name.charAt(0).toUpperCase()}
-            </Text>
+      <>
+        {showInviteHeader && (
+          <View style={{ paddingVertical: 8 }}>
+            <Text style={{ color: '#888', fontSize: 14 }}>Invite to Adjunct</Text>
+            <View style={{ height: 1, backgroundColor: '#ddd', marginTop: 4 }} />
           </View>
         )}
-        <View>
-          <Text style={styles.contactName}>{item.name}</Text>
-          {!item.isUser && (
-            <Text style={styles.inviteText}>Invite to Adjunct</Text>
-          )}
-        </View>
-      </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handlePress}
+          disabled={!item.isUser}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingVertical: 10,
+            opacity: item.isUser ? 1 : 0.5,
+          }}
+        >
+          {/* Colored circle with initials */}
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              marginRight: 10,
+              backgroundColor: stringToColor(item.name),
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16 }}>
+              {getInitials(item.name)}
+            </Text>
+          </View>
+
+          <View>
+            <Text style={{ fontSize: 16, fontWeight: 'bold' }}>{item.name}</Text>
+            {item.isUser ? (
+              <Text style={{ color: 'green' }}>On Adjunct</Text>
+            ) : (
+              <Text style={{ color: '#888' }}>Invite to Adjunct</Text>
+            )}
+          </View>
+        </TouchableOpacity>
+      </>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={{ flex: 1, paddingHorizontal: 16, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
       {loading ? (
-        <ActivityIndicator size="large" style={{ marginTop: 20 }} />
-      ) : contacts.length === 0 ? (
-        <Text style={{ textAlign: "center", marginTop: 20 }}>
-          No contacts found.
-        </Text>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#000" />
+          <Text style={{ marginTop: 8 }}>Loading contacts...</Text>
+        </View>
       ) : (
         <FlatList
           data={contacts}
           keyExtractor={(item) => item.id}
-          renderItem={renderContact}
+          renderItem={renderItem}
         />
       )}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  contactItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  disabledContact: { opacity: 0.5 },
-  avatar: { width: 40, height: 40, borderRadius: 20, marginRight: 12 },
-  defaultAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#ddd",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  contactName: { fontSize: 16, fontWeight: "500" },
-  inviteText: { fontSize: 12, color: "green" },
-});
+function normalizePhone(phone: string | undefined | null): string {
+  if (!phone) return '';
+  return phone.replace(/\D/g, '');
+}
+
+function getInitials(name: string): string {
+  const names = name.trim().split(' ');
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0].charAt(0).toUpperCase();
+  return (names[0].charAt(0) + names[1].charAt(0)).toUpperCase();
+}
+
+function stringToColor(str: string): string {
+  // Generate a consistent color from a string (contact name)
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const c = (hash & 0x00ffffff).toString(16).toUpperCase();
+  return '#' + '00000'.substring(0, 6 - c.length) + c;
+}
