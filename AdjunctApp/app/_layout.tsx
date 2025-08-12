@@ -24,7 +24,7 @@ export default function RootLayout() {
       if (session) {
         router.replace('/home/chats'); // ✅ Change to home or wherever
       } else {
-        router.replace('/');
+        router.replace('/onboard');
       }
 
       await SplashScreen.hideAsync(); // 🔐 Only hide once nav is complete
