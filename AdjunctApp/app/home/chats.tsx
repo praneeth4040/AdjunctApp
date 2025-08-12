@@ -193,6 +193,9 @@ export default function ChatsScreen() {
               </Text>
             }
           />
+            <TouchableOpacity style={styles.profileCircle} onPress={() => router.push('/home/settings')}>
+              <Ionicons name="person" size={20} color="#555" />
+            </TouchableOpacity>
         </View>
       </SafeAreaView>
 

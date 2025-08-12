@@ -23,6 +23,7 @@ export default function Index() {
 
         <Link href='/home'>home</Link>
         <Link href={'/home/chats'}>Home Praneeth</Link>
+        <Link href={'/home/settings'}>profile page</Link>
     </View>
   );
 }
