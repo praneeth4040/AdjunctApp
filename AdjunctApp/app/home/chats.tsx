@@ -124,15 +124,25 @@ export default function ChatsScreen() {
     }
   };
 
+  const handlePlusPress = () => {
+    router.push('/new-chat')
+  };
+
   const renderChatItem = ({ item }: { item: any }) => (
     <TouchableOpacity
       style={styles.chatItem}
       onPress={() => router.push(`/chats/${item.phoneNumber}`)} // ✅ navigate
     >
-      <Image
-        source={{ uri: item.profileImage || "https://via.placeholder.com/50" }}
-        style={styles.avatar}
-      />
+      {item.profileImage ? (
+        <Image
+          source={{ uri: item.profileImage }}
+          style={styles.avatar}
+        />
+      ) : (
+        <View style={styles.defaultAvatar}>
+          <Ionicons name="person" size={24} color="#666" />
+        </View>
+      )}
       <View style={styles.chatInfo}>
         <Text style={styles.chatName}>{item.name}</Text>
         <Text style={styles.chatMessage} numberOfLines={1}>
@@ -144,50 +154,67 @@ export default function ChatsScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#dcd0a8" />
+    <View style={styles.outerContainer}>
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <StatusBar barStyle="dark-content" backgroundColor="#dcd0a8" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>Good morning</Text>
-          <Text style={styles.username}>
-            {userName || "Loading..."}
-          </Text>
-        </View>
-        <View style={styles.headerIcons}>
-          <Ionicons
-            name="search"
-            size={24}
-            color="black"
-            style={{ marginRight: 16 }}
-          />
-          <View style={styles.profileCircle}>
-            <Ionicons name="person" size={20} color="#555" />
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.greeting}>Good morning</Text>
+            <Text style={styles.username}>
+              {userName || "Loading..."}
+            </Text>
+          </View>
+          <View style={styles.headerIcons}>
+            <Ionicons
+              name="search"
+              size={24}
+              color="black"
+              style={{ marginRight: 16 }}
+            />
+            <View style={styles.profileCircle}>
+              <Ionicons name="person" size={20} color="#555" />
+            </View>
           </View>
         </View>
-      </View>
 
-      {/* Chats Section */}
-      <View style={styles.chatsSection}>
-        <FlatList
-          data={conversations}
-          renderItem={renderChatItem}
-          keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
-          contentContainerStyle={{ padding: 16, paddingTop: 24 }}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              No conversations yet — start a chat!
-            </Text>
-          }
-        />
-      </View>
-    </SafeAreaView>
+        {/* Chats Section */}
+        <View style={styles.chatsSection}>
+          <FlatList
+            data={conversations}
+            renderItem={renderChatItem}
+            keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+            contentContainerStyle={{ padding: 16, paddingTop: 24 }}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <Text style={styles.emptyText}>
+                No conversations yet — start a chat!
+              </Text>
+            }
+          />
+        </View>
+      </SafeAreaView>
+
+      {/* Floating Plus Button - positioned in safe area */}
+      <SafeAreaView style={styles.buttonSafeArea} edges={["bottom"]}>
+        <TouchableOpacity 
+          style={styles.plusButton} 
+          onPress={handlePlusPress}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="add" size={28} color="white" />
+        </TouchableOpacity>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  outerContainer: {
+    flex: 1,
+    backgroundColor: "#E9E9E9", // Gray background extends to bottom
+  },
   container: {
     flex: 1,
     backgroundColor: "#dcd0a8",
@@ -242,6 +269,15 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     marginRight: 12,
   },
+  defaultAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+    backgroundColor: "#D3D3D3",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   chatInfo: {
     flex: 1,
   },
@@ -263,5 +299,28 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: "#888",
     marginTop: 40,
+  },
+  buttonSafeArea: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: "transparent",
+  },
+  plusButton: {
+    margin: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#007AFF", // iOS blue color
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 4.65,
+    elevation: 8, // Android shadow
   },
 });
