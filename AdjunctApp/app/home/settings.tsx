@@ -15,6 +15,7 @@ import { Ionicons, AntDesign } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import { router } from 'expo-router';
 
 function Settings() {
   const [userName, setUserName] = useState('');
@@ -58,32 +59,40 @@ function Settings() {
       const fileExt = uri.split('.').pop();
       const fileName = `${userId}_${Date.now()}.${fileExt}`;
       const filePath = `${fileName}`;
-
+  
+      // Read file as base64
       const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      const fileBytes = Buffer.from(base64, 'base64');
-
+  
+      // Convert base64 -> ArrayBuffer
+      const binary = atob(base64);
+      const arrayBuffer = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        arrayBuffer[i] = binary.charCodeAt(i);
+      }
+  
+      // Upload to Supabase
       const { error: uploadError } = await supabase.storage
-        .from('profile-pictures')
-        .upload(filePath, fileBytes, {
+        .from('avatars')
+        .upload(filePath, arrayBuffer, {
           contentType: `image/${fileExt}`,
           upsert: true,
         });
-
+  
       if (uploadError) throw uploadError;
-
+  
       const { data: publicURLData } = supabase.storage
-        .from('profile-pictures')
+        .from('avatars')
         .getPublicUrl(filePath);
-
+  
       return publicURLData.publicUrl;
     } catch (err) {
       console.error('Image upload error:', err);
       return null;
     }
   };
-
+  
   const handleSave = async () => {
     if (!userId) return;
     setLoading(true);
@@ -101,6 +110,7 @@ function Settings() {
 
       if (error) throw error;
       Alert.alert('✅ Success', 'Profile updated!');
+      router.push('/home/chats')
       setEditing(false);
     } catch (err) {
       Alert.alert('❌ Error', 'Failed to update profile');
