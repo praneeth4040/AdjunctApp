@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,44 +8,49 @@ import {
   Platform,
   TouchableOpacity,
   StyleSheet,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
-import { supabase } from '../../lib/supabase';
-import CryptoJS from 'crypto-js';
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
+import { Session } from "@supabase/supabase-js";
+import { supabase } from "../../lib/supabase";
 
-// Keep secret in real app
+type Message = {
+  id: string;
+  sender_phone: string;
+  receiver_phone: string;
+  message: string;
+  created_at: string;
+  is_read: boolean;
+  reply_to_message?: string;
+  is_ai?: boolean;
+};
 
-export default function ChatScreen() {
-  const { id } = useLocalSearchParams(); // receiver's phone number
+const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
+
+export default function ChatScreen({
+  onMessagesRead,
+}: {
+  onMessagesRead?: (phone: string) => void;
+}) {
+  const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const [session, setSession] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [input, setInput] = useState('');
+
+  const [session, setSession] = useState<Session | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
   const [replyToMessage, setReplyToMessage] = useState<string | null>(null);
   const [privacyMode, setPrivacyMode] = useState(false);
-  const messageRef = useRef<FlatList<any>>(null);
 
-  useEffect(() => {
-    const getSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
+  const messageRef = useRef<FlatList<Message>>(null);
+  const activeChatPhone = useRef<string | null>(null);
 
-    getSession();
+  const receiverPhone = normalizePhone((id as string) || "");
+  const senderPhone = session?.user?.phone
+    ? normalizePhone(session.user.phone)
+    : "";
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-    });
-
-    return () => {
-      authListener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  const senderPhone = session?.user?.phone ?? '';
-  const receiverPhone = id as string;
-
+  // Encryption functions
   const SECRET_KEY = [23, 45, 12, 99]; // example key
 
   function stringToBytes(str: string): number[] {
@@ -65,33 +70,18 @@ export default function ChatScreen() {
   }
   
   function encrypt(msg: string): string {
-    console.log(msg)
+    console.log(msg);
     const bytes = stringToBytes(msg);
   
     const encryptedBytes = bytes.map((b, i) => {
       let x = b;
-  
-      // Step 1: XOR with secret key byte (cycled)
       x = x ^ SECRET_KEY[i % SECRET_KEY.length];
-  
-      // Step 2: Rotate left by 3 bits
       x = rotateLeft(x, 3);
-  
-      // Step 3: Add 7 modulo 256
       x = (x + 7) & 0xff;
-  
-      // Step 4: XOR with (key byte + 13) modulo 256 (another key variant)
       x = x ^ ((SECRET_KEY[i % SECRET_KEY.length] + 13) & 0xff);
-  
-      // Step 5: Rotate left by 1 bit
       x = rotateLeft(x, 1);
-  
-      // Step 6: Multiply by 5 modulo 256 (introduces non-linearity)
       x = (x * 5) & 0xff;
-  
-      // Step 7: Add i modulo 256 (adds position dependency)
       x = (x + i) & 0xff;
-  
       return x;
     });
   
@@ -103,86 +93,137 @@ export default function ChatScreen() {
   
     const decryptedBytes = bytes.map((b, i) => {
       let x = b;
-  
-      // Step 7 (reverse): Subtract i modulo 256
       x = (x - i + 256) & 0xff;
-  
-      // Step 6 (reverse): Multiply by modular inverse of 5 mod 256
-      // Since 5 * 205 mod 256 = 1, inverse of 5 mod 256 is 205
       x = (x * 205) & 0xff;
-  
-      // Step 5 (reverse): Rotate right by 1 bit
       x = rotateRight(x, 1);
-  
-      // Step 4 (reverse): XOR with (key byte + 13) modulo 256
       x = x ^ ((SECRET_KEY[i % SECRET_KEY.length] + 13) & 0xff);
-  
-      // Step 3 (reverse): Subtract 7 modulo 256
       x = (x - 7 + 256) & 0xff;
-  
-      // Step 2 (reverse): Rotate right by 3 bits
       x = rotateRight(x, 3);
-  
-      // Step 1 (reverse): XOR with secret key byte
       x = x ^ SECRET_KEY[i % SECRET_KEY.length];
-  
       return x;
     });
   
     return bytesToString(decryptedBytes);
   }
-  
 
-  // Fetch + Subscribe to messages
+  // Track open chat
+  useEffect(() => {
+    activeChatPhone.current = receiverPhone;
+    return () => {
+      activeChatPhone.current = null;
+    };
+  }, [receiverPhone]);
+
+  // Session fetch
+  useEffect(() => {
+    const fetchSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+    };
+    fetchSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, newSession) => {
+        setSession(newSession);
+      }
+    );
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Load + Subscribe
   useEffect(() => {
     if (!senderPhone || !receiverPhone) return;
 
-    const fetchMessages = async () => {
+    const loadMessages = async () => {
       const { data, error } = await supabase
-        .from('messages')
-        .select('*')
+        .from("messages")
+        .select("*")
         .or(
           `and(sender_phone.eq.${senderPhone},receiver_phone.eq.${receiverPhone}),and(sender_phone.eq.${receiverPhone},receiver_phone.eq.${senderPhone})`
         )
-        .order('created_at', { ascending: true });
+        .order("created_at", { ascending: true });
 
       if (error) {
-        console.error('Fetch error:', error);
-      } else {
-        if (privacyMode) {
-          const decryptedMessages = data.map((msg: any) => ({
-            ...msg,
-            message: decrypt(msg.message),
-          }));
-          setMessages(decryptedMessages);
-        } else {
-          setMessages(data);
-        }
+        console.error("Fetch error:", error);
+        return;
       }
+
+      // Decrypt messages if privacy mode is on
+      const processedMessages = privacyMode 
+        ? data.map((msg: Message) => ({
+            ...msg,
+            message: msg.is_ai || !msg.message ? msg.message : decrypt(msg.message),
+            reply_to_message: msg.reply_to_message ? decrypt(msg.reply_to_message) : undefined,
+          }))
+        : data;
+
+      setMessages(processedMessages as Message[]);
+      scrollToBottom();
     };
 
-    fetchMessages();
+    loadMessages();
 
     const channel = supabase
-      .channel('messages-channel')
+      .channel("messages-channel")
       .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-        },
-        (payload) => {
-          const newMessage = payload.new;
-          if (
-            (newMessage.sender_phone === senderPhone && newMessage.receiver_phone === receiverPhone) ||
-            (newMessage.sender_phone === receiverPhone && newMessage.receiver_phone === senderPhone)
-          ) {
-            const decryptedMessage = privacyMode
-              ? { ...newMessage, message: decrypt(newMessage.message) }
-              : newMessage;
-            setMessages((prev) => [...prev, decryptedMessage]);
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        async (payload) => {
+          const newMsg = payload.new as Message;
+          const isInCurrentChat =
+            (newMsg.sender_phone === senderPhone &&
+              newMsg.receiver_phone === receiverPhone) ||
+            (newMsg.sender_phone === receiverPhone &&
+              newMsg.receiver_phone === senderPhone);
+
+          if (isInCurrentChat) {
+            // Process new message for privacy mode
+            const processedMsg = privacyMode
+              ? {
+                  ...newMsg,
+                  message: newMsg.is_ai || !newMsg.message ? newMsg.message : decrypt(newMsg.message),
+                  reply_to_message: newMsg.reply_to_message ? decrypt(newMsg.reply_to_message) : undefined,
+                }
+              : newMsg;
+
+            setMessages((prev) => [...prev, processedMsg]);
+            scrollToBottom();
+
+            if (
+              newMsg.sender_phone === receiverPhone &&
+              activeChatPhone.current === receiverPhone
+            ) {
+              const { error: updateErr } = await supabase
+                .from("messages")
+                .update({ is_read: true })
+                .eq("id", newMsg.id);
+
+              if (updateErr) console.error("Auto-read error:", updateErr);
+
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === newMsg.id ? { ...msg, is_read: true } : msg
+                )
+              );
+
+              onMessagesRead?.(receiverPhone);
+            }
           }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const updatedMsg = payload.new as Message;
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === updatedMsg.id ? updatedMsg : msg
+            )
+          );
         }
       )
       .subscribe();
@@ -192,10 +233,51 @@ export default function ChatScreen() {
     };
   }, [senderPhone, receiverPhone, privacyMode]);
 
-  // AI call (unchanged)
+  // Focus: mark read
+  useFocusEffect(
+    useCallback(() => {
+      if (senderPhone && receiverPhone) {
+        markMessagesAsRead();
+      }
+    }, [senderPhone, receiverPhone])
+  );
+
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      messageRef.current?.scrollToEnd({ animated: true });
+    }, 50);
+  };
+
+  const markMessagesAsRead = async () => {
+    if (!senderPhone || !receiverPhone) return;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .update({ is_read: true })
+      .eq("sender_phone", receiverPhone)
+      .eq("receiver_phone", senderPhone)
+      .eq("is_read", false)
+      .select();
+
+    if (error) {
+      console.error("Mark read error:", error);
+      return;
+    }
+
+    if ((data as Message[]).length > 0) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.sender_phone === receiverPhone ? { ...msg, is_read: true } : msg
+        )
+      );
+      onMessagesRead?.(receiverPhone);
+    }
+  };
+
+  // AI call
   const fetchAIResponse = async (query: string) => {
     try {
-      const res = await fetch('https://6b0b87a01d4c.ngrok-free.app/ask-ai', {
+      const res = await fetch('https://c2558650e758.ngrok-free.app/ask-ai', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -212,28 +294,33 @@ export default function ChatScreen() {
   };
 
   const sendMessage = async () => {
-    console.log("this the input message",input)
+    console.log("this the input message", input);
     if (!input.trim() || !senderPhone || !receiverPhone) return;
 
     const text = input.trim();
-    console.log("text",text)
+    console.log("text", text);
     const textToStore = privacyMode ? encrypt(text) : text;
-    console.log("text to store" ,textToStore)
-    const { error } = await supabase.from('messages').insert({
+    const replyToStore = replyToMessage && privacyMode ? encrypt(replyToMessage) : replyToMessage;
+    console.log("text to store", textToStore);
+
+    const { error } = await supabase.from("messages").insert({
       sender_phone: senderPhone,
       receiver_phone: receiverPhone,
       message: textToStore,
-      reply_to_message: replyToMessage,
+      reply_to_message: replyToStore,
+      is_read: false,
     });
 
     if (error) {
-      console.error('Send error:', error.message);
+      console.error("Send error:", error.message);
       return;
     }
 
-    setInput('');
+    setInput("");
     setReplyToMessage(null);
+    scrollToBottom();
 
+    // Handle AI command
     if (text.includes('/ai')) {
       const aiQuery = text.split('/ai')[1]?.trim();
       if (aiQuery.length > 0) {
@@ -245,6 +332,7 @@ export default function ChatScreen() {
           receiver_phone: senderPhone,
           message: replyToStore,
           is_ai: true,
+          is_read: false,
         });
       }
     }
@@ -258,7 +346,7 @@ export default function ChatScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: any }) => {
+  const renderItem = ({ item }: { item: Message }) => {
     const isMyMsg = item.sender_phone === senderPhone;
     const isBotMsg = item.is_ai;
     const isReplyMsg = !!item.reply_to_message;
@@ -267,7 +355,7 @@ export default function ChatScreen() {
       return (
         <View style={{ alignItems: 'center', marginVertical: 6 }}>
           <View style={[styles.botMsg, { maxWidth: '80%' }]}>
-            <Text>{item.message}</Text>
+            <Text style={styles.botMsgText}>{item.message}</Text>
           </View>
         </View>
       );
@@ -277,7 +365,8 @@ export default function ChatScreen() {
       <TouchableOpacity onLongPress={() => handleToggleReply(item.message)}>
         <View
           style={[
-            isMyMsg ? styles.myMsg : styles.theirMsg,
+            styles.messageWrapper,
+            isMyMsg ? styles.myWrapper : styles.theirWrapper,
             isReplyMsg && styles.replyMsgContainer,
           ]}
         >
@@ -288,7 +377,19 @@ export default function ChatScreen() {
               </Text>
             </View>
           )}
-          <Text>{item.message}</Text>
+          <Text
+            style={
+              isMyMsg ? styles.myMsg : styles.theirMsg
+            }
+          >
+            {item.message}
+          </Text>
+          <Text style={styles.timeText}>
+            {new Date(item.created_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </Text>
         </View>
       </TouchableOpacity>
     );
@@ -301,10 +402,10 @@ export default function ChatScreen() {
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }, themeStyles.safeArea]}>
       <KeyboardAvoidingView
         style={[styles.container, themeStyles.container]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
-        <View style={styles.titleContainer}>
+        <View style={styles.header}>
           <Text style={[styles.title, themeStyles.title]}>Chat with {receiverPhone}</Text>
           <TouchableOpacity
             onPress={() => setPrivacyMode(!privacyMode)}
@@ -314,7 +415,7 @@ export default function ChatScreen() {
             ]}
           >
             <Text style={styles.privacyToggleText}>
-              {privacyMode ? 'Privacy ON' : 'Compactability'}
+              {privacyMode ? 'Privacy ON' : 'Compatibility'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -323,8 +424,12 @@ export default function ChatScreen() {
           ref={messageRef}
           data={messages}
           renderItem={renderItem}
-          keyExtractor={(item) => item.id?.toString()}
-          contentContainerStyle={{ flexGrow: 1 }}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: "flex-end",
+            paddingVertical: 8,
+          }}
         />
 
         {replyToMessage && (
@@ -345,7 +450,7 @@ export default function ChatScreen() {
             onChangeText={setInput}
           />
           <TouchableOpacity style={styles.button} onPress={sendMessage}>
-            <Text style={styles.buttonText}>Send</Text>
+            <Text style={styles.buttonText}>➤</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -353,19 +458,25 @@ export default function ChatScreen() {
   );
 }
 
-const baseStyles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
+const styles = StyleSheet.create({
+  safeArea: { 
+    flex: 1, 
   },
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
+  container: { 
+    flex: 1, 
+    paddingHorizontal: 12, 
   },
-  titleContainer: {
+  header: {
+    paddingVertical: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: "#c1b590",
+  },
+  title: { 
+    fontSize: 20, 
+    fontFamily: "Kreon-Bold", 
   },
   privacyToggleBtn: {
     paddingVertical: 6,
@@ -375,76 +486,64 @@ const baseStyles = StyleSheet.create({
   privacyToggleText: {
     color: '#fff',
     fontWeight: 'bold',
+    fontSize: 12,
   },
-  title: {
-    fontSize: 22,
-    fontFamily: 'Kreon-Bold',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-    alignItems: 'center',
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    padding: 12,
-    borderRadius: 12,
-    fontFamily: 'Kreon-Regular',
-    borderColor: '#aaa',
-    color: '#000',
-    backgroundColor: '#fff',
-  },
-  button: {
-    backgroundColor: '#b2ffe2',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 1, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  buttonText: {
-    fontSize: 16,
-    color: '#000',
-    fontFamily: 'Kreon-Bold',
-  },
-  myMsg: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#DCF8C6',
-    padding: 10,
+  messageWrapper: {
+    maxWidth: "75%",
+    padding: 8,
     marginVertical: 4,
-    borderRadius: 12,
-    maxWidth: '75%',
-    fontFamily: 'Kreon-Regular',
+    borderRadius: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
   },
-  theirMsg: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#ECECEC',
-    padding: 10,
-    marginVertical: 4,
-    borderRadius: 12,
-    maxWidth: '75%',
-    fontFamily: 'Kreon-Regular',
+  myWrapper: {
+    alignSelf: "flex-end",
+    backgroundColor: "#DCF8C6",
+    borderBottomRightRadius: 4,
+  },
+  theirWrapper: {
+    alignSelf: "flex-start",
+    backgroundColor: "#ECECEC",
+    borderBottomLeftRadius: 4,
+  },
+  myMsg: { 
+    fontFamily: "Kreon-Regular", 
+    color: "#000", 
+    fontSize: 16 
+  },
+  theirMsg: { 
+    fontFamily: "Kreon-Regular", 
+    color: "#000", 
+    fontSize: 16 
   },
   botMsg: {
     backgroundColor: '#FFE7C2',
     padding: 10,
     borderRadius: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  botMsgText: {
     fontFamily: 'Kreon-Regular',
     fontStyle: 'italic',
     textAlign: 'center',
     color: '#000',
-    maxWidth: '75%',
+    fontSize: 16,
+  },
+  timeText: {
+    fontSize: 10,
+    color: "#555",
+    marginTop: 2,
+    alignSelf: "flex-end",
   },
   replyMsgContainer: {
     borderLeftWidth: 3,
     borderLeftColor: '#4a90e2',
     paddingLeft: 8,
-    marginVertical: 4,
   },
   replyToContainer: {
     backgroundColor: '#e1eaff',
@@ -457,6 +556,7 @@ const baseStyles = StyleSheet.create({
     color: '#4a90e2',
     fontStyle: 'italic',
     fontSize: 12,
+    fontFamily: "Kreon-Regular",
   },
   replyBanner: {
     flexDirection: 'row',
@@ -470,11 +570,49 @@ const baseStyles = StyleSheet.create({
   replyBannerText: {
     color: '#00796b',
     flex: 1,
+    fontFamily: "Kreon-Regular",
   },
   cancelReplyText: {
     color: 'red',
     marginLeft: 12,
     fontWeight: 'bold',
+    fontFamily: "Kreon-Bold",
+  },
+  inputContainer: {
+    flexDirection: "row",
+    gap: 4,
+    alignItems: "center",
+    padding: 4,
+    borderTopWidth: 1,
+    borderColor: "#c1b590",
+    marginBottom: 8,
+  },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 25,
+    fontFamily: "Kreon-Regular",
+    borderColor: "#aaa",
+  },
+  button: {
+    backgroundColor: "#b2ffe2",
+    width: 45,
+    height: 45,
+    borderRadius: 25,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 1, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  buttonText: { 
+    fontSize: 18, 
+    color: "#000", 
+    fontWeight: "bold" 
   },
 });
 
@@ -494,7 +632,6 @@ const lightTheme = StyleSheet.create({
   input: {
     backgroundColor: '#fff',
     color: '#000',
-    borderColor: '#aaa',
   },
 });
 
@@ -517,6 +654,3 @@ const darkTheme = StyleSheet.create({
     borderColor: '#555',
   },
 });
-
-// Merge base styles and theme styles together
-const styles = baseStyles;
