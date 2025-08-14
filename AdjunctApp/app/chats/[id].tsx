@@ -8,12 +8,14 @@ import {
   Platform,
   TouchableOpacity,
   StyleSheet,
+  Keyboard,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
+import * as Contacts from "expo-contacts";
 
 type Message = {
   id: string;
@@ -33,10 +35,13 @@ export default function ChatScreen({
 }) {
   const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [contactName, setContactName] = useState<string>("");
+  const [loadingContact, setLoadingContact] = useState<boolean>(true);
 
   const messageRef = useRef<FlatList<Message>>(null);
   const activeChatPhone = useRef<string | null>(null);
@@ -52,6 +57,13 @@ export default function ChatScreen({
     return () => {
       activeChatPhone.current = null;
     };
+  }, [receiverPhone]);
+
+  // Load contact name when receiver phone is available
+  useEffect(() => {
+    if (receiverPhone) {
+      loadContactName(receiverPhone);
+    }
   }, [receiverPhone]);
 
   // Session fetch
@@ -163,6 +175,71 @@ export default function ChatScreen({
     }, [senderPhone, receiverPhone])
   );
 
+  // Keyboard listener to scroll to bottom when keyboard appears
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => {
+        // Scroll to show recent messages near keyboard on both platforms
+        setTimeout(() => {
+          scrollToBottom();
+        }, 100);
+      }
+    );
+
+    const keyboardDidHideListener = Keyboard.addListener(
+      'keyboardDidHide',
+      () => {
+        // Scroll to bottom when keyboard is dismissed
+        setTimeout(() => {
+          scrollToBottom();
+        }, 50);
+      }
+    );
+
+    return () => {
+      keyboardDidShowListener?.remove();
+      keyboardDidHideListener?.remove();
+    };
+  }, []);
+
+  const loadContactName = async (phoneNumber: string) => {
+    setLoadingContact(true);
+    try {
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        setContactName(phoneNumber);
+        setLoadingContact(false);
+        return;
+      }
+
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
+      });
+
+      for (const contact of data) {
+        if (contact.phoneNumbers) {
+          for (const phone of contact.phoneNumbers) {
+            const cleanPhone = normalizePhone(phone.number || "");
+            if (cleanPhone === phoneNumber) {
+              setContactName(contact.name || phoneNumber);
+              setLoadingContact(false);
+              return;
+            }
+          }
+        }
+      }
+      
+      // If no contact found, use the phone number
+      setContactName(phoneNumber);
+      setLoadingContact(false);
+    } catch (error) {
+      console.error("Error loading contact:", error);
+      setContactName(phoneNumber);
+      setLoadingContact(false);
+    }
+  };
+
   const scrollToBottom = () => {
     setTimeout(() => {
       messageRef.current?.scrollToEnd({ animated: true });
@@ -241,39 +318,58 @@ export default function ChatScreen({
 
   return (
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
-      >
+             <KeyboardAvoidingView
+         style={styles.container}
+         behavior={Platform.OS === "ios" ? "padding" : "height"}
+         keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
+         enabled={true}
+       >
         <View style={styles.header}>
-          <Text style={styles.title}>Chat with {receiverPhone}</Text>
+                     <TouchableOpacity 
+             style={styles.backButton} 
+             onPress={() => router.back()}
+           >
+             <Text style={styles.backButtonText}>&lt;</Text>
+           </TouchableOpacity>
+          <View style={styles.titleContainer}>
+            <Text style={styles.title}>
+              {contactName || receiverPhone}
+            </Text>
+          </View>
         </View>
+                 <FlatList
+           ref={messageRef}
+           data={messages}
+           renderItem={renderItem}
+           keyExtractor={(item) => item.id}
+           contentContainerStyle={{
+             flexGrow: 1,
+             paddingVertical: 8,
+           }}
+           showsVerticalScrollIndicator={false}
+           automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+           maintainVisibleContentPosition={{
+             minIndexForVisible: 0,
+             autoscrollToTopThreshold: 10,
+           }}
+         />
 
-        <FlatList
-          ref={messageRef}
-          data={messages}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{
-            flexGrow: 1,
-            justifyContent: "flex-end",
-            paddingVertical: 8,
-          }}
-        />
-
-        <View style={styles.inputContainer}>
-          <TextInput
-            placeholder="Type your message..."
-            placeholderTextColor="#5c5340"
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-          />
-          <TouchableOpacity style={styles.button} onPress={sendMessage}>
-            <Text style={styles.buttonText}>➤</Text>
-          </TouchableOpacity>
-        </View>
+                 <View style={styles.inputContainer}>
+           <TextInput
+             placeholder="Type your message..."
+             placeholderTextColor="#5c5340"
+             style={styles.input}
+             value={input}
+             onChangeText={setInput}
+             multiline={false}
+             returnKeyType="send"
+             onSubmitEditing={sendMessage}
+             blurOnSubmit={false}
+           />
+           <TouchableOpacity style={styles.button} onPress={sendMessage}>
+             <Text style={styles.buttonText}>➤</Text>
+           </TouchableOpacity>
+         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -284,9 +380,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 12, backgroundColor: "#DCD0A8" },
   header: {
     paddingVertical: 12,
+    flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: 1,
     borderColor: "#c1b590",
+    position: "relative",
+  },
+  titleContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   title: { fontSize: 20, fontFamily: "Kreon-Bold", color: "#000" },
   messageWrapper: {
@@ -321,11 +424,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 4,
     alignItems: "center",
-    padding: 4,
+    padding: 8,
     backgroundColor: "#DCD0A8",
     borderTopWidth: 1,
     borderColor: "#c1b590",
-    marginBottom: 8,
+    paddingBottom: 12,
   },
   input: {
     flex: 1,
@@ -352,4 +455,19 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   buttonText: { fontSize: 18, color: "#000", fontWeight: "bold" },
+  backButton: {
+    position: "absolute",
+    left: 0,
+    top: 10,
+    width: 44,
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  backButtonText: {
+    fontSize: 28,
+    color: "#000",
+    fontFamily: "Kreon-Bold",
+  },
 });
