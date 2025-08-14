@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,81 +8,143 @@ import {
   Platform,
   TouchableOpacity,
   StyleSheet,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
-import { supabase } from '../../lib/supabase';
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
+import { Session } from "@supabase/supabase-js";
+import { supabase } from "../../lib/supabase";
 
-export default function ChatScreen() {
-  const { id } = useLocalSearchParams(); // receiver's phone number
+type Message = {
+  id: string;
+  sender_phone: string;
+  receiver_phone: string;
+  message: string;
+  created_at: string;
+  is_read: boolean;
+};
+
+const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
+
+export default function ChatScreen({
+  onMessagesRead,
+}: {
+  onMessagesRead?: (phone: string) => void;
+}) {
+  const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const [session, setSession] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [input, setInput] = useState('');
-  const messageRef = useRef<FlatList<any>>(null);
 
-  // Auth Session listener
+  const [session, setSession] = useState<Session | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+
+  const messageRef = useRef<FlatList<Message>>(null);
+  const activeChatPhone = useRef<string | null>(null);
+
+  const receiverPhone = normalizePhone((id as string) || "");
+  const senderPhone = session?.user?.phone
+    ? normalizePhone(session.user.phone)
+    : "";
+
+  // Track open chat
   useEffect(() => {
-    const getSession = async () => {
+    activeChatPhone.current = receiverPhone;
+    return () => {
+      activeChatPhone.current = null;
+    };
+  }, [receiverPhone]);
+
+  // Session fetch
+  useEffect(() => {
+    const fetchSession = async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data.session);
     };
+    fetchSession();
 
-    getSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-    });
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, newSession) => {
+        setSession(newSession);
+      }
+    );
 
     return () => {
       authListener?.subscription.unsubscribe();
     };
   }, []);
 
-  const senderPhone = session?.user?.phone ?? '';
-  const receiverPhone = id as string;
-
-  // Fetch and listen to messages
+  // Load + Subscribe
   useEffect(() => {
     if (!senderPhone || !receiverPhone) return;
 
-    const fetchMessages = async () => {
+    const loadMessages = async () => {
       const { data, error } = await supabase
-        .from('messages')
-        .select('*')
+        .from("messages")
+        .select("*")
         .or(
           `and(sender_phone.eq.${senderPhone},receiver_phone.eq.${receiverPhone}),and(sender_phone.eq.${receiverPhone},receiver_phone.eq.${senderPhone})`
         )
-        .order('created_at', { ascending: true });
+        .order("created_at", { ascending: true });
 
       if (error) {
-        console.error('Fetch error:', error);
-      } else {
-        setMessages(data);
-        scrollToBottom();
+        console.error("Fetch error:", error);
+        return;
       }
+      setMessages(data as Message[]);
+      scrollToBottom();
     };
 
-    fetchMessages();
+    loadMessages();
 
     const channel = supabase
-      .channel('messages-channel')
+      .channel("messages-channel")
       .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-        },
-        (payload) => {
-          const newMessage = payload.new;
-          if (
-            (newMessage.sender_phone === senderPhone && newMessage.receiver_phone === receiverPhone) ||
-            (newMessage.sender_phone === receiverPhone && newMessage.receiver_phone === senderPhone)
-          ) {
-            setMessages((prev) => [...prev, newMessage]);
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        async (payload) => {
+          const newMsg = payload.new as Message;
+          const isInCurrentChat =
+            (newMsg.sender_phone === senderPhone &&
+              newMsg.receiver_phone === receiverPhone) ||
+            (newMsg.sender_phone === receiverPhone &&
+              newMsg.receiver_phone === senderPhone);
+
+          if (isInCurrentChat) {
+            setMessages((prev) => [...prev, newMsg]);
             scrollToBottom();
+
+            if (
+              newMsg.sender_phone === receiverPhone &&
+              activeChatPhone.current === receiverPhone
+            ) {
+              const { error: updateErr } = await supabase
+                .from("messages")
+                .update({ is_read: true })
+                .eq("id", newMsg.id);
+
+              if (updateErr) console.error("Auto-read error:", updateErr);
+
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === newMsg.id ? { ...msg, is_read: true } : msg
+                )
+              );
+
+              onMessagesRead?.(receiverPhone);
+            }
           }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const updatedMsg = payload.new as Message;
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === updatedMsg.id ? updatedMsg : msg
+            )
+          );
         }
       )
       .subscribe();
@@ -92,43 +154,87 @@ export default function ChatScreen() {
     };
   }, [senderPhone, receiverPhone]);
 
+  // Focus: mark read
+  useFocusEffect(
+    useCallback(() => {
+      if (senderPhone && receiverPhone) {
+        markMessagesAsRead();
+      }
+    }, [senderPhone, receiverPhone])
+  );
+
   const scrollToBottom = () => {
     setTimeout(() => {
       messageRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    }, 50);
+  };
+
+  const markMessagesAsRead = async () => {
+    if (!senderPhone || !receiverPhone) return;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .update({ is_read: true })
+      .eq("sender_phone", receiverPhone)
+      .eq("receiver_phone", senderPhone)
+      .eq("is_read", false)
+      .select(); // ensures `data` is an array
+
+    if (error) {
+      console.error("Mark read error:", error);
+      return;
+    }
+
+    if ((data as Message[]).length > 0) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.sender_phone === receiverPhone ? { ...msg, is_read: true } : msg
+        )
+      );
+      onMessagesRead?.(receiverPhone);
+    }
   };
 
   const sendMessage = async () => {
     if (!input.trim() || !senderPhone || !receiverPhone) return;
 
-    const { error } = await supabase.from('messages').insert({
+    const { error } = await supabase.from("messages").insert({
       sender_phone: senderPhone,
       receiver_phone: receiverPhone,
       message: input.trim(),
+      is_read: false,
     });
 
     if (error) {
-      console.error('Send error:', error.message);
-    } else {
-      setInput('');
-      scrollToBottom();
+      console.error("Send error:", error.message);
+      return;
     }
+
+    setInput("");
+    scrollToBottom();
   };
 
-  const renderItem = ({ item }: { item: any }) => (
+  const renderItem = ({ item }: { item: Message }) => (
     <View
       style={[
         styles.messageWrapper,
-        item.sender_phone === senderPhone ? styles.myWrapper : styles.theirWrapper,
+        item.sender_phone === senderPhone
+          ? styles.myWrapper
+          : styles.theirWrapper,
       ]}
     >
       <Text
-        style={item.sender_phone === senderPhone ? styles.myMsg : styles.theirMsg}
+        style={
+          item.sender_phone === senderPhone ? styles.myMsg : styles.theirMsg
+        }
       >
         {item.message}
       </Text>
       <Text style={styles.timeText}>
-        {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        {new Date(item.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
       </Text>
     </View>
   );
@@ -137,24 +243,25 @@ export default function ChatScreen() {
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Chat with {receiverPhone}</Text>
         </View>
 
-        {/* Messages */}
         <FlatList
           ref={messageRef}
           data={messages}
           renderItem={renderItem}
-          keyExtractor={(item) => item.id?.toString()}
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingVertical: 8 }}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: "flex-end",
+            paddingVertical: 8,
+          }}
         />
 
-        {/* Input Bar */}
         <View style={styles.inputContainer}>
           <TextInput
             placeholder="Type your message..."
@@ -173,71 +280,52 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#DCD0A8',
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 12,
-    backgroundColor: '#DCD0A8',
-  },
+  safeArea: { flex: 1, backgroundColor: "#DCD0A8" },
+  container: { flex: 1, paddingHorizontal: 12, backgroundColor: "#DCD0A8" },
   header: {
     paddingVertical: 12,
-    alignItems: 'center',
+    alignItems: "center",
     borderBottomWidth: 1,
-    borderColor: '#c1b590',
+    borderColor: "#c1b590",
   },
-  title: {
-    fontSize: 20,
-    fontFamily: 'Kreon-Bold',
-    color: '#000',
-  },
+  title: { fontSize: 20, fontFamily: "Kreon-Bold", color: "#000" },
   messageWrapper: {
-    maxWidth: '75%',
+    maxWidth: "75%",
     padding: 8,
     marginVertical: 4,
     borderRadius: 16,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 3,
     shadowOffset: { width: 0, height: 2 },
   },
   myWrapper: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#DCF8C6',
+    alignSelf: "flex-end",
+    backgroundColor: "#DCF8C6",
     borderBottomRightRadius: 4,
   },
   theirWrapper: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#ECECEC',
+    alignSelf: "flex-start",
+    backgroundColor: "#ECECEC",
     borderBottomLeftRadius: 4,
   },
-  myMsg: {
-    fontFamily: 'Kreon-Regular',
-    color: '#000',
-    fontSize: 16,
-  },
-  theirMsg: {
-    fontFamily: 'Kreon-Regular',
-    color: '#000',
-    fontSize: 16,
-  },
+  myMsg: { fontFamily: "Kreon-Regular", color: "#000", fontSize: 16 },
+  theirMsg: { fontFamily: "Kreon-Regular", color: "#000", fontSize: 16 },
   timeText: {
     fontSize: 10,
-    color: '#555',
+    color: "#555",
     marginTop: 2,
-    alignSelf: 'flex-end',
+    alignSelf: "flex-end",
   },
   inputContainer: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 4,
-    alignItems: 'center',
+    alignItems: "center",
     padding: 4,
-    backgroundColor: '#DCD0A8',
+    backgroundColor: "#DCD0A8",
     borderTopWidth: 1,
-    borderColor: '#c1b590',
-    marginBottom:8,
+    borderColor: "#c1b590",
+    marginBottom: 8,
   },
   input: {
     flex: 1,
@@ -245,27 +333,23 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 25,
-    fontFamily: 'Kreon-Regular',
-    backgroundColor: '#fff',
-    borderColor: '#aaa',
-    color: '#000',
+    fontFamily: "Kreon-Regular",
+    backgroundColor: "#fff",
+    borderColor: "#aaa",
+    color: "#000",
   },
   button: {
-    backgroundColor: '#b2ffe2',
+    backgroundColor: "#b2ffe2",
     width: 45,
     height: 45,
     borderRadius: 25,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 1, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
   },
-  buttonText: {
-    fontSize: 18,
-    color: '#000',
-    fontWeight: 'bold',
-  },
+  buttonText: { fontSize: 18, color: "#000", fontWeight: "bold" },
 });

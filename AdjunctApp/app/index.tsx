@@ -21,7 +21,6 @@ export default function Index() {
         <Link href="/permissions">Permissions</Link>
         <Link href='/profileSetup'>Profile Setup</Link>
 
-        <Link href='/home'>home</Link>
         <Link href={'/home/chats'}>Home Praneeth</Link>
         <Link href={'/home/settings'}>profile page</Link>
     </View>
