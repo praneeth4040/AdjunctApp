@@ -1,13 +1,14 @@
   import React, { useState, useEffect, useRef, useCallback } from "react";
-  import {
-    View,
-    Text,
-    StyleSheet,
-    FlatList,
-    TouchableOpacity,
-    Image,
-    StatusBar,
-  } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Image,
+  StatusBar,
+  TextInput,
+} from "react-native";
   import { SafeAreaView } from "react-native-safe-area-context";
   import { Ionicons } from "@expo/vector-icons";
   import { supabase } from "../../lib/supabase";
@@ -35,9 +36,14 @@
 
   export default function ChatsScreen() {
     const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [isSearchActive, setIsSearchActive] = useState(false);
     const [userName, setUserName] = useState("");
     const [phoneNumber, setPhoneNumber] = useState("");
     const [contactsMap, setContactsMap] = useState<Record<string, string>>({});
+    const [allContacts, setAllContacts] = useState<Array<{name: string, phoneNumber: string}>>([]);
+    const [filteredContacts, setFilteredContacts] = useState<Array<{name: string, phoneNumber: string}>>([]);
     const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
     const router = useRouter();
 
@@ -49,18 +55,28 @@
       if (status !== "granted") return;
 
       const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers],
+        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
       });
 
       const phoneMap: Record<string, string> = {};
+      const contactsList: Array<{name: string, phoneNumber: string}> = [];
+      
       data.forEach((contact) => {
         contact.phoneNumbers?.forEach((num) => {
           const clean = normalizePhone(num.number);
-          if (clean) phoneMap[clean] = contact.name || "";
+          if (clean) {
+            phoneMap[clean] = contact.name || "";
+            contactsList.push({
+              name: contact.name || clean,
+              phoneNumber: clean
+            });
+          }
         });
       });
 
       setContactsMap(phoneMap);
+      setAllContacts(contactsList);
+      setFilteredContacts(contactsList);
     };
 
     const fetchUserAndContacts = useCallback(async () => {
@@ -135,6 +151,7 @@
       });
 
       setConversations(result);
+      setFilteredConversations(result);
     };
 
     const markMessagesAsRead = async (partnerPhone: string) => {
@@ -236,6 +253,37 @@
       router.push(`/chats/${phone}`);
     };
 
+    const handleSearch = (query: string) => {
+      setSearchQuery(query);
+      if (query.trim() === "") {
+        setFilteredConversations(conversations);
+        setFilteredContacts(allContacts);
+        setIsSearchActive(false);
+      } else {
+        // Filter conversations
+        const filtered = conversations.filter((conv) =>
+          conv.name.toLowerCase().includes(query.toLowerCase()) ||
+          conv.phoneNumber.includes(query)
+        );
+        setFilteredConversations(filtered);
+        
+        // Filter contacts
+        const filteredContacts = allContacts.filter((contact) =>
+          contact.name.toLowerCase().includes(query.toLowerCase()) ||
+          contact.phoneNumber.includes(query)
+        );
+        setFilteredContacts(filteredContacts);
+        setIsSearchActive(true);
+      }
+    };
+
+    const clearSearch = () => {
+      setSearchQuery("");
+      setFilteredConversations(conversations);
+      setFilteredContacts(allContacts);
+      setIsSearchActive(false);
+    };
+
     const renderChatItem = ({ item }: { item: Conversation }) => (
       <TouchableOpacity style={styles.chatItem} onPress={() => handleOpenChat(item.phoneNumber)}>
         {item.profileImage ? (
@@ -262,6 +310,21 @@
       </TouchableOpacity>
     );
 
+    const renderContactItem = ({ item }: { item: {name: string, phoneNumber: string} }) => (
+      <TouchableOpacity style={styles.contactItem} onPress={() => handleOpenChat(item.phoneNumber)}>
+        <View style={styles.defaultAvatar}>
+          <Ionicons name="person" size={24} color="#666" />
+        </View>
+        <View style={styles.contactInfo}>
+          <Text style={styles.contactName}>{item.name}</Text>
+          <Text style={styles.contactPhone}>{item.phoneNumber}</Text>
+        </View>
+        <View style={styles.newChatIcon}>
+          <Ionicons name="chatbubble-outline" size={20} color="#007AFF" />
+        </View>
+      </TouchableOpacity>
+    );
+
     return (
       <View style={styles.outerContainer}>
         <SafeAreaView style={styles.container} edges={["top"]}>
@@ -272,7 +335,12 @@
               <Text style={styles.username}>{userName || "Loading..."}</Text>
             </View>
             <View style={styles.headerIcons}>
-              <Ionicons name="search" size={24} color="black" style={{ marginRight: 16 }} />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={() => setIsSearchActive(!isSearchActive)}
+              >
+                <Ionicons name="search" size={24} color="black" />
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.profileCircle}
                 onPress={() => router.push("/home/settings")}
@@ -281,18 +349,52 @@
               </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.chatsSection}>
-            <FlatList
-              data={conversations}
-              renderItem={renderChatItem}
-              keyExtractor={(item) => item.id.toString()}
-              contentContainerStyle={{ padding: 16, paddingTop: 24 }}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <Text style={styles.emptyText}>No conversations yet — start a chat!</Text>
-              }
-            />
-          </View>
+          
+          {isSearchActive && (
+            <View style={styles.searchContainer}>
+              <View style={styles.searchInputContainer}>
+                <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search contacts..."
+                  placeholderTextColor="#666"
+                  value={searchQuery}
+                  onChangeText={handleSearch}
+                  autoFocus={true}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
+                    <Ionicons name="close-circle" size={20} color="#666" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
+                     <View style={styles.chatsSection}>
+             {isSearchActive ? (
+               <FlatList
+                 data={filteredContacts}
+                 renderItem={renderContactItem}
+                 keyExtractor={(item) => item.phoneNumber}
+                 contentContainerStyle={{ padding: 16, paddingTop: 24 }}
+                 showsVerticalScrollIndicator={false}
+                 ListEmptyComponent={
+                   <Text style={styles.emptyText}>No contacts found</Text>
+                 }
+               />
+             ) : (
+               <FlatList
+                 data={filteredConversations}
+                 renderItem={renderChatItem}
+                 keyExtractor={(item) => item.id.toString()}
+                 contentContainerStyle={{ padding: 16, paddingTop: 24 }}
+                 showsVerticalScrollIndicator={false}
+                 ListEmptyComponent={
+                   <Text style={styles.emptyText}>No conversations yet — start a chat!</Text>
+                 }
+               />
+             )}
+           </View>
 
           {/* Floating + Button */}
           <TouchableOpacity
@@ -386,5 +488,52 @@
       color: "white",
       fontSize: 12,
       fontWeight: "bold",
+    },
+    searchButton: {
+      marginRight: 16,
+      padding: 4,
+    },
+    searchContainer: {
+      paddingHorizontal: 20,
+      paddingBottom: 16,
+    },
+    searchInputContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: "#fff",
+      borderRadius: 25,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+    },
+    searchIcon: {
+      marginRight: 12,
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 16,
+      fontFamily: "Kreon-Regular",
+      color: "#000",
+    },
+    clearButton: {
+      marginLeft: 8,
+      padding: 2,
+    },
+    contactItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: "#ddd",
+    },
+    contactInfo: { flex: 1 },
+    contactName: { fontSize: 16, fontFamily: "Kreon-Bold" },
+    contactPhone: { fontSize: 14, color: "#666", fontFamily: "Kreon-Regular" },
+    newChatIcon: {
+      padding: 8,
     },
   });
