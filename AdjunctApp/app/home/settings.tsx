@@ -15,7 +15,8 @@ import { Ionicons, AntDesign } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { router } from 'expo-router';
+import { router, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 function Settings() {
   const [userName, setUserName] = useState('');
@@ -132,9 +133,21 @@ function Settings() {
   };
 
   const handleLogout = async () => {
+    const router = useRouter();
+  
     try {
+      // 1️⃣ Sign out from Supabase
       await supabase.auth.signOut();
-      Alert.alert('👋 Logged out', 'You have been signed out.');
+  
+      // 2️⃣ Clear any local storage or state
+      await AsyncStorage.clear(); // optional if you store session or user info
+      // setUser(null); // if using state for user
+  
+      // 3️⃣ Navigate to onboard page
+      
+  
+      Alert.alert('Logged out', 'loggedout.');
+      router.push('/onboard');
     } catch (err) {
       Alert.alert('❌ Error', 'Logout failed');
       console.error(err);
