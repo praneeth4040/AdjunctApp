@@ -1,4 +1,7 @@
 // ChatScreen.tsx
+// IMPORTANT: This MUST be first to fix "no PRNG" for libs like tweetnacl
+import 'react-native-get-random-values';
+
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
@@ -50,45 +53,86 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
   const receiverPhone = normalizePhone((id as string) || "");
   const senderPhone = session?.user?.phone ? normalizePhone(session.user.phone) : "";
 
-  // Track active chat
+  // Keep track of which chat is active (for read receipts)
   useEffect(() => {
     activeChatPhone.current = receiverPhone;
     return () => { activeChatPhone.current = null; };
   }, [receiverPhone]);
 
-  // Fetch session
+  // Fetch & listen to session
   useEffect(() => {
-    const fetchSession = async () => {
+    let mounted = true;
+
+    (async () => {
       const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-    fetchSession();
+      if (mounted) setSession(data.session);
+    })();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
     });
 
-    return () => authListener?.subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
   }, []);
 
-  // Load & decrypt messages
+  // Helper: scroll to bottom
+  const scrollToBottom = () =>
+    setTimeout(() => messageRef.current?.scrollToEnd({ animated: true }), 50);
+
+  // Mark messages as read (all incoming from receiver -> me)
+  const markMessagesAsRead = useCallback(async () => {
+    if (!senderPhone || !receiverPhone) return;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .update({ is_read: true })
+      .eq("sender_phone", receiverPhone)
+      .eq("receiver_phone", senderPhone)
+      .eq("is_read", false)
+      .select();
+
+    if (error) {
+      console.error("Mark read error:", error);
+      return;
+    }
+
+    if ((data as Message[] | null)?.length) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.sender_phone === receiverPhone ? { ...msg, is_read: true } : msg
+        )
+      );
+      onMessagesRead?.(receiverPhone);
+    }
+  }, [senderPhone, receiverPhone, onMessagesRead]);
+
+  // Load + decrypt messages & realtime updates
   useEffect(() => {
     if (!senderPhone || !receiverPhone) return;
+
+    let mounted = true;
 
     const decryptMessages = async (msgs: Message[]) => {
       const { privateKeyBase64 } = await getOrCreateKeys(senderPhone);
 
       return Promise.all(
         msgs.map(async (msg) => {
+          // Encrypted messages
           if (msg.mode === "privacy" && msg.ciphertext && msg.nonce) {
             try {
-              const otherPhone = msg.sender_phone === senderPhone ? msg.receiver_phone : msg.sender_phone;
-              const { data: otherProfile } = await supabase
+              const otherPhone =
+                msg.sender_phone === senderPhone ? msg.receiver_phone : msg.sender_phone;
+
+              const { data: otherProfile, error: profileErr } = await supabase
                 .from("profiles")
                 .select("public_key")
                 .eq("phone_number", otherPhone)
                 .single();
 
+              if (profileErr) throw profileErr;
               if (!otherProfile?.public_key) throw new Error("Other user's public key missing");
 
               const decrypted = decryptMessage(
@@ -104,11 +148,12 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
             }
           }
 
-          // Compatibility mode placeholder
+          // If I'm in compatibility mode and it's encrypted, show placeholder
           if (!privacyMode && msg.mode === "privacy") {
             return { ...msg, message: "[Encrypted message]" };
           }
 
+          // Plain compatibility messages unchanged
           return msg;
         })
       );
@@ -128,85 +173,76 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         return;
       }
 
-      const decrypted = await decryptMessages(data as Message[]);
+      const decrypted = await decryptMessages((data || []) as Message[]);
+      if (!mounted) return;
       setMessages(decrypted);
       scrollToBottom();
     };
 
     loadMessages();
 
+    // Realtime subscription
     const channel = supabase
       .channel("messages-channel")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, async (payload) => {
-        const newMsg = payload.new as Message;
-        const isInCurrentChat =
-          (newMsg.sender_phone === senderPhone && newMsg.receiver_phone === receiverPhone) ||
-          (newMsg.sender_phone === receiverPhone && newMsg.receiver_phone === senderPhone);
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        async (payload) => {
+          const newMsg = payload.new as Message;
 
-        if (isInCurrentChat) {
+          const isInCurrentChat =
+            (newMsg.sender_phone === senderPhone && newMsg.receiver_phone === receiverPhone) ||
+            (newMsg.sender_phone === receiverPhone && newMsg.receiver_phone === senderPhone);
+
+          if (!isInCurrentChat) return;
+
           const decrypted = (await decryptMessages([newMsg]))[0];
+          if (!mounted) return;
+
           setMessages((prev) => [...prev, decrypted]);
           scrollToBottom();
 
-          if (newMsg.sender_phone === receiverPhone && activeChatPhone.current === receiverPhone) {
+          // Auto mark read for incoming messages to this active chat
+          if (
+            newMsg.sender_phone === receiverPhone &&
+            activeChatPhone.current === receiverPhone
+          ) {
             await supabase.from("messages").update({ is_read: true }).eq("id", newMsg.id);
             setMessages((prev) =>
-              prev.map((msg) => (msg.id === newMsg.id ? { ...msg, is_read: true } : msg))
+              prev.map((m) => (m.id === newMsg.id ? { ...m, is_read: true } : m))
             );
             onMessagesRead?.(receiverPhone);
           }
         }
-      })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload) => {
-        const updatedMsg = payload.new as Message;
-        setMessages((prev) => prev.map((msg) => (msg.id === updatedMsg.id ? updatedMsg : msg)));
-      })
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const updatedMsg = payload.new as Message;
+          if (!mounted) return;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m))
+          );
+        }
+      )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
-  }, [senderPhone, receiverPhone, privacyMode]);
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [senderPhone, receiverPhone, privacyMode, onMessagesRead]);
 
-  // Focus effect (TypeScript-safe)
+  // Mark read when screen focuses
   useFocusEffect(
     useCallback(() => {
-      const markRead = async () => {
-        try {
-          await markMessagesAsRead();
-        } catch (err) {
-          console.error(err);
-        }
-      };
-      markRead();
+      markMessagesAsRead();
       return;
-    }, [senderPhone, receiverPhone])
+    }, [markMessagesAsRead])
   );
 
-  const scrollToBottom = () => setTimeout(() => messageRef.current?.scrollToEnd({ animated: true }), 50);
-
-  const markMessagesAsRead = async () => {
-    if (!senderPhone || !receiverPhone) return;
-
-    const { data, error } = await supabase
-      .from("messages")
-      .update({ is_read: true })
-      .eq("sender_phone", receiverPhone)
-      .eq("receiver_phone", senderPhone)
-      .eq("is_read", false)
-      .select();
-
-    if (error) {
-      console.error("Mark read error:", error);
-      return;
-    }
-
-    if ((data as Message[]).length > 0) {
-      setMessages((prev) =>
-        prev.map((msg) => (msg.sender_phone === receiverPhone ? { ...msg, is_read: true } : msg))
-      );
-      onMessagesRead?.(receiverPhone);
-    }
-  };
-
+  // Send a message (encrypted or not)
   const sendMessage = async () => {
     if (!input.trim() || !senderPhone || !receiverPhone) return;
     const text = input.trim();
@@ -217,13 +253,15 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       let nonce: string | undefined;
 
       if (privacyMode) {
+        // Ensures PRNG works (thanks to react-native-get-random-values at top)
         const { privateKeyBase64 } = await getOrCreateKeys(senderPhone);
-        const { data: receiverProfile } = await supabase
+        const { data: receiverProfile, error: rpErr } = await supabase
           .from("profiles")
           .select("public_key")
           .eq("phone_number", receiverPhone)
           .single();
 
+        if (rpErr) throw rpErr;
         if (!receiverProfile?.public_key) throw new Error("Receiver public key not found");
 
         const encrypted = encryptMessage(text, receiverProfile.public_key, privateKeyBase64);
@@ -238,7 +276,7 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         ciphertext,
         nonce,
         mode: privacyMode ? "privacy" : "compatibility",
-        reply_to_message: replyToStore,
+        reply_to_message: replyToStore ?? null,
         is_read: false,
       });
 
@@ -249,12 +287,12 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       scrollToBottom();
     } catch (err: any) {
       console.error("Send failed:", err);
-      Alert.alert("Error", err.message || "Failed to send message");
+      Alert.alert("Error", err?.message ?? "Failed to send message");
     }
   };
 
   const handleToggleReply = (messageText: string) => {
-    setReplyToMessage(replyToMessage === messageText ? null : messageText);
+    setReplyToMessage((prev) => (prev === messageText ? null : messageText));
   };
 
   const renderItem = ({ item }: { item: Message }) => {
@@ -316,10 +354,11 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
+        {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, themeStyles.title]}>Chat with {receiverPhone}</Text>
           <TouchableOpacity
-            onPress={() => setPrivacyMode(!privacyMode)}
+            onPress={() => setPrivacyMode((p) => !p)}
             style={[styles.privacyToggleBtn, { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' }]}
           >
             <Text style={styles.privacyToggleText}>
@@ -328,14 +367,18 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
           </TouchableOpacity>
         </View>
 
+        {/* Messages */}
         <FlatList
           ref={messageRef}
           data={messages}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end", paddingVertical: 8 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={scrollToBottom}
         />
 
+        {/* Reply Banner */}
         {replyToMessage && (
           <View style={styles.replyBanner}>
             <Text style={styles.replyBannerText}>Replying to: {replyToMessage}</Text>
@@ -345,6 +388,7 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
           </View>
         )}
 
+        {/* Input */}
         <View style={[styles.inputContainer, themeStyles.inputContainer]}>
           <TextInput
             placeholder="Type your message..."
@@ -352,6 +396,9 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
             style={[styles.input, themeStyles.input]}
             value={input}
             onChangeText={setInput}
+            returnKeyType="send"
+            onSubmitEditing={sendMessage}
+            blurOnSubmit={false}
           />
           <TouchableOpacity style={styles.button} onPress={sendMessage}>
             <Text style={styles.buttonText}>➤</Text>
@@ -362,11 +409,18 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
   );
 }
 
-// --- Styles remain mostly the same ---
+// --- Styles ---
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   container: { flex: 1, paddingHorizontal: 12 },
-  header: { paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderColor: "#c1b590" },
+  header: {
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderColor: "#c1b590"
+  },
   title: { fontSize: 20, fontFamily: "Kreon-Bold" },
   privacyToggleBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
   privacyToggleText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
@@ -381,12 +435,43 @@ const styles = StyleSheet.create({
   replyMsgContainer: { borderLeftWidth: 3, borderLeftColor: '#4a90e2', paddingLeft: 8 },
   replyToContainer: { backgroundColor: '#e1eaff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginBottom: 4 },
   replyToText: { color: '#4a90e2', fontStyle: 'italic', fontSize: 12, fontFamily: "Kreon-Regular" },
-  replyBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e0f7fa', padding: 8, borderRadius: 6, marginBottom: 6, justifyContent: 'space-between' },
+  replyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e0f7fa',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 6,
+    justifyContent: 'space-between'
+  },
   replyBannerText: { color: '#00796b', flex: 1, fontFamily: "Kreon-Regular" },
   cancelReplyText: { color: 'red', marginLeft: 12, fontWeight: 'bold', fontFamily: "Kreon-Bold" },
-  inputContainer: { flexDirection: "row", gap: 4, alignItems: "center", padding: 4, borderTopWidth: 1, borderColor: "#c1b590", marginBottom: 8 },
-  input: { flex: 1, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 25, fontFamily: "Kreon-Regular", borderColor: "#aaa" },
-  button: { backgroundColor: "#b2ffe2", width: 45, height: 45, borderRadius: 25, alignItems: "center", justifyContent: "center" },
+  inputContainer: {
+    flexDirection: "row",
+    gap: 4,
+    alignItems: "center",
+    padding: 4,
+    borderTopWidth: 1,
+    borderColor: "#c1b590",
+    marginBottom: 8
+  },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 25,
+    fontFamily: "Kreon-Regular",
+    borderColor: "#aaa"
+  },
+  button: {
+    backgroundColor: "#b2ffe2",
+    width: 45,
+    height: 45,
+    borderRadius: 25,
+    alignItems: "center",
+    justifyContent: "center"
+  },
   buttonText: { fontSize: 18, color: "#000", fontWeight: "bold" },
 });
 
