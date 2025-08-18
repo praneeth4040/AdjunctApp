@@ -2,20 +2,17 @@ from google import genai
 from google.genai import types
 from gemini_prompt import SYSTEM_PROMPT
 from helpers.tool_dispatcher import dispatch_tool_call
-from helpers.schema import get_chat_with_profiles_schema , send_email_schema
+from helpers.schema import all_tools
 
 
 # --- CONFIG ---
 GOOGLE_API_KEY = "AIzaSyDsDyoBB6x7Qni3_JoCKB40DEUk20wkj00"
 
 # ---TOOLS ---
-tools=[
-    get_chat_with_profiles_schema,
-    send_email_schema
-]
+
 # --- INIT ---
-client = genai.Client()
-config = types.GenerateContentConfig(tools=tools,system_instruction=SYSTEM_PROMPT)
+client = genai.Client(api_key=GOOGLE_API_KEY)
+config = types.GenerateContentConfig(tools=all_tools,system_instruction=SYSTEM_PROMPT)
 
 def ai_response(query,sender_phone,receiver_phone):
     """

@@ -20,6 +20,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
 import { getOrCreateKeys, encryptMessage, decryptMessage } from "../../lib/encrypt";
+import axios from 'axios';
 
 type Message = {
   id: string;
@@ -269,7 +270,8 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         nonce = encrypted.nonce;
       }
 
-      const { error } = await supabase.from("messages").insert({
+      // 🔹 Step 1: Insert user’s message
+      const { data: inserted, error } = await supabase.from("messages").insert({
         sender_phone: senderPhone,
         receiver_phone: receiverPhone,
         message: privacyMode ? "" : text,
@@ -278,9 +280,45 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         mode: privacyMode ? "privacy" : "compatibility",
         reply_to_message: replyToStore ?? null,
         is_read: false,
-      });
+      }).select().single();
 
       if (error) throw error;
+
+      // 🔹 Step 2: If it's an AI query in compatibility mode → call Flask AI
+      if (!privacyMode && text.startsWith("/ai ")) {
+        const query = text.slice(4).trim();
+        try {
+          const resp = await axios.post("http://localhost:5000/ask-ai", {
+            query,
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+          });
+
+          const aiReply = resp.data.reply || "⚠️ AI could not respond.";
+
+          // 🔹 Step 3: Insert AI reply as same user, but `is_ai=true`
+          await supabase.from("messages").insert({
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+            message: aiReply,
+            is_ai: true,
+            reply_to_message: inserted.id, // link back to the /ai query
+            mode: "compatibility",
+            is_read: false,
+          });
+        } catch (aiErr: any) {
+          console.error("AI request failed:", aiErr);
+          await supabase.from("messages").insert({
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+            message: "⚠️ AI could not respond right now.",
+            is_ai: true,
+            reply_to_message: inserted.id,
+            mode: "compatibility",
+            is_read: false,
+          });
+        }
+      }
 
       setInput("");
       setReplyToMessage(null);
@@ -302,6 +340,22 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
 
     const displayMessage =
       !privacyMode && item.mode === "privacy" ? "[Encrypted message]" : item.message;
+      if (isMyMsg && isBotMsg) {
+        // 🔹 AI reply styled differently
+        return (
+          <View
+            style={[
+              styles.messageWrapper,
+              styles.aiWrapper,
+            ]}
+          >
+            <Text style={styles.aiMsg}>{displayMessage}</Text>
+            <Text style={styles.timeText}>
+              {new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </Text>
+          </View>
+        );
+      }
 
     if (isBotMsg) {
       return (
@@ -473,6 +527,21 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   buttonText: { fontSize: 18, color: "#000", fontWeight: "bold" },
+  aiWrapper: {
+    alignSelf: "flex-end",
+    backgroundColor: "#FFD580", // soft orange
+    borderBottomRightRadius: 4,
+    padding: 8,
+    marginVertical: 4,
+    borderRadius: 16,
+    maxWidth: "75%",
+  },
+  aiMsg: {
+    fontFamily: "Kreon-Regular",
+    color: "#000",
+    fontSize: 16,
+    fontStyle: "italic",
+  },
 });
 
 const lightTheme = StyleSheet.create({
