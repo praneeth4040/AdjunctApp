@@ -17,7 +17,7 @@ def dispatch_tool_call(tool_name: str, args: dict, sender_phone: str = None, rec
     try:
         # Match tool name and call appropriate function
         if tool_name == "get_chat_with_profiles":
-            return get_chat_with_profiles_tool(args.get("sender_phone"),args.get("receiver_phone"),args.get("limit",10))
+            return get_chat_with_profiles_tool(sender_phone,receiver_phone,args.get("limit",10))
 
         elif tool_name == "send_email_with_attachments":
             # Directly map dict keys to function params

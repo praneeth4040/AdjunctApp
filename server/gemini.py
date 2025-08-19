@@ -41,7 +41,7 @@ def ai_response(query,sender_phone,receiver_phone):
                 context.append(types.Content(role="model", parts=[types.Part(function_call=function_call)]))
                 try:
                     result = dispatch_tool_call(function_call.name, function_call.args,sender_phone,receiver_phone)
-                    tool_result_msg = f"Tool result: {result['result']}"
+                    tool_result_msg = f"Tool result: {result}"
                     print(tool_result_msg)
                     context.append(types.Content(role="tool", parts=[types.Part(function_response=types.FunctionResponse(name=function_call.name, response=result))]))
                 except Exception as tool_err:

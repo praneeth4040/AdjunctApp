@@ -21,8 +21,8 @@ def get_chat_with_profiles_tool(sender_phone,receiver_phone,limit=10):
     messages = messages_result.data if messages_result.data else []
 
     # Fetch profile info
-    sender_profile = db.supabase.table("profiles").select("*").eq("phone_number", sender_phone).single().execute().data
-    receiver_profile = db.supabase.table("profiles").select("*").eq("phone_number", receiver_phone).single().execute().data
+    sender_profile = db.get_profile(sender_phone)
+    receiver_profile = db.get_profile(receiver_phone)
 
     return {
         "messages": messages,

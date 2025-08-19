@@ -27,4 +27,17 @@ class Database:
 
         return result
     
+    def get_profile(self, phone_number: str):
+        """
+        Retrieve a single profile by phone number.
+        """
+        result = (
+            self.client.table("profiles")
+            .select("*")
+            .eq("phone_number", phone_number)
+            .single()
+            .execute()
+        )
+        return result.data if result.data else None
+    
 
