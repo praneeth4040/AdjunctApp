@@ -3,7 +3,7 @@ from helpers.db import Database
 
 db = Database()
 
-def get_chat_with_profiles_tool(args: dict):
+def get_chat_with_profiles_tool(sender_phone,receiver_phone,limit=10):
     """
     Retrieves recent messages between two users along with their profile info.
     Expected args: {
@@ -12,9 +12,6 @@ def get_chat_with_profiles_tool(args: dict):
         "limit": 10
     }
     """
-    sender_phone = args.get("sender_phone")
-    receiver_phone = args.get("receiver_phone")
-    limit = args.get("limit", 10)
 
     if not sender_phone or not receiver_phone:
         return {"error": "Missing sender_phone or receiver_phone"}
