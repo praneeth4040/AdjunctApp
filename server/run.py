@@ -9,7 +9,7 @@ app = Flask(__name__)
 def home():
     return 'Hello, World!'
 
-@app.route('/ask-ai', methods=['POST'])
+
 @app.route("/ask-ai", methods=["POST"])
 def ask_ai():
     data = request.get_json()

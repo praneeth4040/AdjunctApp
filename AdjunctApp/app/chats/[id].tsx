@@ -1,3 +1,7 @@
+// ChatScreen.tsx
+// IMPORTANT: This MUST be first to fix "no PRNG" for libs like tweetnacl
+import 'react-native-get-random-values';
+
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
@@ -8,18 +12,24 @@ import {
   Platform,
   TouchableOpacity,
   StyleSheet,
+  Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
+import { getOrCreateKeys, encryptMessage, decryptMessage } from "../../lib/encrypt";
+import axios from 'axios';
 
 type Message = {
   id: string;
   sender_phone: string;
   receiver_phone: string;
   message: string;
+  ciphertext?: string;
+  nonce?: string;
+  mode?: "privacy" | "compatibility";
   created_at: string;
   is_read: boolean;
   reply_to_message?: string;
@@ -28,11 +38,7 @@ type Message = {
 
 const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
 
-export default function ChatScreen({
-  onMessagesRead,
-}: {
-  onMessagesRead?: (phone: string) => void;
-}) {
+export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone: string) => void }) {
   const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
 
@@ -46,209 +52,39 @@ export default function ChatScreen({
   const activeChatPhone = useRef<string | null>(null);
 
   const receiverPhone = normalizePhone((id as string) || "");
-  const senderPhone = session?.user?.phone
-    ? normalizePhone(session.user.phone)
-    : "";
+  const senderPhone = session?.user?.phone ? normalizePhone(session.user.phone) : "";
 
-  // Encryption functions
-  const SECRET_KEY = [23, 45, 12, 99]; // example key
-
-  function stringToBytes(str: string): number[] {
-    return Array.from(new TextEncoder().encode(str));
-  }
-  
-  function bytesToString(bytes: number[]): string {
-    return new TextDecoder().decode(new Uint8Array(bytes));
-  }
-  
-  function rotateLeft(byte: number, count: number): number {
-    return ((byte << count) | (byte >> (8 - count))) & 0xff;
-  }
-  
-  function rotateRight(byte: number, count: number): number {
-    return ((byte >> count) | (byte << (8 - count))) & 0xff;
-  }
-  
-  function encrypt(msg: string): string {
-    console.log(msg);
-    const bytes = stringToBytes(msg);
-  
-    const encryptedBytes = bytes.map((b, i) => {
-      let x = b;
-      x = x ^ SECRET_KEY[i % SECRET_KEY.length];
-      x = rotateLeft(x, 3);
-      x = (x + 7) & 0xff;
-      x = x ^ ((SECRET_KEY[i % SECRET_KEY.length] + 13) & 0xff);
-      x = rotateLeft(x, 1);
-      x = (x * 5) & 0xff;
-      x = (x + i) & 0xff;
-      return x;
-    });
-  
-    return btoa(String.fromCharCode(...encryptedBytes));
-  }
-  
-  function decrypt(ciphertext: string): string {
-    const bytes = atob(ciphertext).split('').map(c => c.charCodeAt(0));
-  
-    const decryptedBytes = bytes.map((b, i) => {
-      let x = b;
-      x = (x - i + 256) & 0xff;
-      x = (x * 205) & 0xff;
-      x = rotateRight(x, 1);
-      x = x ^ ((SECRET_KEY[i % SECRET_KEY.length] + 13) & 0xff);
-      x = (x - 7 + 256) & 0xff;
-      x = rotateRight(x, 3);
-      x = x ^ SECRET_KEY[i % SECRET_KEY.length];
-      return x;
-    });
-  
-    return bytesToString(decryptedBytes);
-  }
-
-  // Track open chat
+  // Keep track of which chat is active (for read receipts)
   useEffect(() => {
     activeChatPhone.current = receiverPhone;
-    return () => {
-      activeChatPhone.current = null;
-    };
+    return () => { activeChatPhone.current = null; };
   }, [receiverPhone]);
 
-  // Session fetch
+  // Fetch & listen to session
   useEffect(() => {
-    const fetchSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-    fetchSession();
+    let mounted = true;
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
-        setSession(newSession);
-      }
-    );
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (mounted) setSession(data.session);
+    })();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
 
     return () => {
-      authListener?.subscription.unsubscribe();
+      mounted = false;
+      authListener?.subscription?.unsubscribe();
     };
   }, []);
 
-  // Load + Subscribe
-  useEffect(() => {
-    if (!senderPhone || !receiverPhone) return;
+  // Helper: scroll to bottom
+  const scrollToBottom = () =>
+    setTimeout(() => messageRef.current?.scrollToEnd({ animated: true }), 50);
 
-    const loadMessages = async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .or(
-          `and(sender_phone.eq.${senderPhone},receiver_phone.eq.${receiverPhone}),and(sender_phone.eq.${receiverPhone},receiver_phone.eq.${senderPhone})`
-        )
-        .order("created_at", { ascending: true });
-
-      if (error) {
-        console.error("Fetch error:", error);
-        return;
-      }
-
-      // Decrypt messages if privacy mode is on
-      const processedMessages = privacyMode 
-        ? data.map((msg: Message) => ({
-            ...msg,
-            message: msg.is_ai || !msg.message ? msg.message : decrypt(msg.message),
-            reply_to_message: msg.reply_to_message ? decrypt(msg.reply_to_message) : undefined,
-          }))
-        : data;
-
-      setMessages(processedMessages as Message[]);
-      scrollToBottom();
-    };
-
-    loadMessages();
-
-    const channel = supabase
-      .channel("messages-channel")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages" },
-        async (payload) => {
-          const newMsg = payload.new as Message;
-          const isInCurrentChat =
-            (newMsg.sender_phone === senderPhone &&
-              newMsg.receiver_phone === receiverPhone) ||
-            (newMsg.sender_phone === receiverPhone &&
-              newMsg.receiver_phone === senderPhone);
-
-          if (isInCurrentChat) {
-            // Process new message for privacy mode
-            const processedMsg = privacyMode
-              ? {
-                  ...newMsg,
-                  message: newMsg.is_ai || !newMsg.message ? newMsg.message : decrypt(newMsg.message),
-                  reply_to_message: newMsg.reply_to_message ? decrypt(newMsg.reply_to_message) : undefined,
-                }
-              : newMsg;
-
-            setMessages((prev) => [...prev, processedMsg]);
-            scrollToBottom();
-
-            if (
-              newMsg.sender_phone === receiverPhone &&
-              activeChatPhone.current === receiverPhone
-            ) {
-              const { error: updateErr } = await supabase
-                .from("messages")
-                .update({ is_read: true })
-                .eq("id", newMsg.id);
-
-              if (updateErr) console.error("Auto-read error:", updateErr);
-
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === newMsg.id ? { ...msg, is_read: true } : msg
-                )
-              );
-
-              onMessagesRead?.(receiverPhone);
-            }
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "messages" },
-        (payload) => {
-          const updatedMsg = payload.new as Message;
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === updatedMsg.id ? updatedMsg : msg
-            )
-          );
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [senderPhone, receiverPhone, privacyMode]);
-
-  // Focus: mark read
-  useFocusEffect(
-    useCallback(() => {
-      if (senderPhone && receiverPhone) {
-        markMessagesAsRead();
-      }
-    }, [senderPhone, receiverPhone])
-  );
-
-  const scrollToBottom = () => {
-    setTimeout(() => {
-      messageRef.current?.scrollToEnd({ animated: true });
-    }, 50);
-  };
-
-  const markMessagesAsRead = async () => {
+  // Mark messages as read (all incoming from receiver -> me)
+  const markMessagesAsRead = useCallback(async () => {
     if (!senderPhone || !receiverPhone) return;
 
     const { data, error } = await supabase
@@ -264,7 +100,7 @@ export default function ChatScreen({
       return;
     }
 
-    if ((data as Message[]).length > 0) {
+    if ((data as Message[] | null)?.length) {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.sender_phone === receiverPhone ? { ...msg, is_read: true } : msg
@@ -272,78 +108,229 @@ export default function ChatScreen({
       );
       onMessagesRead?.(receiverPhone);
     }
-  };
+  }, [senderPhone, receiverPhone, onMessagesRead]);
 
-  // AI call
-  const fetchAIResponse = async (query: string) => {
-    try {
-      const res = await fetch('https://c2558650e758.ngrok-free.app/ask-ai', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query, sender_phone: senderPhone, receiver_phone: receiverPhone }),
-      });
+  // Load + decrypt messages & realtime updates
+  useEffect(() => {
+    if (!senderPhone || !receiverPhone) return;
 
-      const data = await res.json();
-      return data.reply;
-    } catch (err) {
-      console.error('AI error:', err);
-      return 'AI failed to respond.';
-    }
-  };
+    let mounted = true;
 
-  const sendMessage = async () => {
-    console.log("this the input message", input);
-    if (!input.trim() || !senderPhone || !receiverPhone) return;
+    const decryptMessages = async (msgs: Message[]) => {
+      const { privateKeyBase64 } = await getOrCreateKeys(senderPhone);
 
-    const text = input.trim();
-    console.log("text", text);
-    const textToStore = privacyMode ? encrypt(text) : text;
-    const replyToStore = replyToMessage && privacyMode ? encrypt(replyToMessage) : replyToMessage;
-    console.log("text to store", textToStore);
+      return Promise.all(
+        msgs.map(async (msg) => {
+          // Encrypted messages
+          if (msg.mode === "privacy" && msg.ciphertext && msg.nonce) {
+            try {
+              const otherPhone =
+                msg.sender_phone === senderPhone ? msg.receiver_phone : msg.sender_phone;
 
-    const { error } = await supabase.from("messages").insert({
-      sender_phone: senderPhone,
-      receiver_phone: receiverPhone,
-      message: textToStore,
-      reply_to_message: replyToStore,
-      is_read: false,
-    });
+              const { data: otherProfile, error: profileErr } = await supabase
+                .from("profiles")
+                .select("public_key")
+                .eq("phone_number", otherPhone)
+                .single();
 
-    if (error) {
-      console.error("Send error:", error.message);
-      return;
-    }
+              if (profileErr) throw profileErr;
+              if (!otherProfile?.public_key) throw new Error("Other user's public key missing");
 
-    setInput("");
-    setReplyToMessage(null);
-    scrollToBottom();
+              const decrypted = decryptMessage(
+                msg.ciphertext,
+                msg.nonce,
+                otherProfile.public_key,
+                privateKeyBase64
+              );
 
-    // Handle AI command
-    if (text.includes('/ai')) {
-      const aiQuery = text.split('/ai')[1]?.trim();
-      if (aiQuery.length > 0) {
-        const aiReply = await fetchAIResponse(aiQuery);
-        const replyToStore = privacyMode ? encrypt(aiReply) : aiReply;
+              return { ...msg, message: decrypted };
+            } catch {
+              return { ...msg, message: "[Decryption failed]" };
+            }
+          }
 
-        await supabase.from('messages').insert({
-          sender_phone: receiverPhone,
-          receiver_phone: senderPhone,
-          message: replyToStore,
-          is_ai: true,
-          is_read: false,
-        });
+          // If I'm in compatibility mode and it's encrypted, show placeholder
+          if (!privacyMode && msg.mode === "privacy") {
+            return { ...msg, message: "[Encrypted message]" };
+          }
+
+          // Plain compatibility messages unchanged
+          return msg;
+        })
+      );
+    };
+
+    const loadMessages = async () => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .or(
+          `and(sender_phone.eq.${senderPhone},receiver_phone.eq.${receiverPhone}),and(sender_phone.eq.${receiverPhone},receiver_phone.eq.${senderPhone})`
+        )
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Fetch error:", error);
+        return;
       }
+
+      const decrypted = await decryptMessages((data || []) as Message[]);
+      if (!mounted) return;
+      setMessages(decrypted);
+      scrollToBottom();
+    };
+
+    loadMessages();
+
+    // Realtime subscription
+    const channel = supabase
+      .channel("messages-channel")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        async (payload) => {
+          const newMsg = payload.new as Message;
+
+          const isInCurrentChat =
+            (newMsg.sender_phone === senderPhone && newMsg.receiver_phone === receiverPhone) ||
+            (newMsg.sender_phone === receiverPhone && newMsg.receiver_phone === senderPhone);
+
+          if (!isInCurrentChat) return;
+
+          const decrypted = (await decryptMessages([newMsg]))[0];
+          if (!mounted) return;
+
+          setMessages((prev) => [...prev, decrypted]);
+          scrollToBottom();
+
+          // Auto mark read for incoming messages to this active chat
+          if (
+            newMsg.sender_phone === receiverPhone &&
+            activeChatPhone.current === receiverPhone
+          ) {
+            await supabase.from("messages").update({ is_read: true }).eq("id", newMsg.id);
+            setMessages((prev) =>
+              prev.map((m) => (m.id === newMsg.id ? { ...m, is_read: true } : m))
+            );
+            onMessagesRead?.(receiverPhone);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const updatedMsg = payload.new as Message;
+          if (!mounted) return;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m))
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [senderPhone, receiverPhone, privacyMode, onMessagesRead]);
+
+  // Mark read when screen focuses
+  useFocusEffect(
+    useCallback(() => {
+      markMessagesAsRead();
+      return;
+    }, [markMessagesAsRead])
+  );
+
+  // Send a message (encrypted or not)
+  const sendMessage = async () => {
+    if (!input.trim() || !senderPhone || !receiverPhone) return;
+    const text = input.trim();
+    const replyToStore = replyToMessage;
+
+    try {
+      let ciphertext: string | undefined;
+      let nonce: string | undefined;
+
+      if (privacyMode) {
+        // Ensures PRNG works (thanks to react-native-get-random-values at top)
+        const { privateKeyBase64 } = await getOrCreateKeys(senderPhone);
+        const { data: receiverProfile, error: rpErr } = await supabase
+          .from("profiles")
+          .select("public_key")
+          .eq("phone_number", receiverPhone)
+          .single();
+
+        if (rpErr) throw rpErr;
+        if (!receiverProfile?.public_key) throw new Error("Receiver public key not found");
+
+        const encrypted = encryptMessage(text, receiverProfile.public_key, privateKeyBase64);
+        ciphertext = encrypted.ciphertext;
+        nonce = encrypted.nonce;
+      }
+
+      // 🔹 Step 1: Insert user’s message
+      const { data: inserted, error } = await supabase.from("messages").insert({
+        sender_phone: senderPhone,
+        receiver_phone: receiverPhone,
+        message: privacyMode ? "" : text,
+        ciphertext,
+        nonce,
+        mode: privacyMode ? "privacy" : "compatibility",
+        reply_to_message: replyToStore ?? null,
+        is_read: false,
+      }).select().single();
+
+      if (error) throw error;
+
+      // 🔹 Step 2: If it's an AI query in compatibility mode → call Flask AI
+      if (!privacyMode && text.startsWith("/ai ")) {
+        const query = text.slice(4).trim();
+        try {
+          const resp = await axios.post("http://localhost:5000/ask-ai", {
+            query,
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+          });
+
+          const aiReply = resp.data.reply || "⚠️ AI could not respond.";
+
+          // 🔹 Step 3: Insert AI reply as same user, but `is_ai=true`
+          await supabase.from("messages").insert({
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+            message: aiReply,
+            is_ai: true,
+            reply_to_message: inserted.id, // link back to the /ai query
+            mode: "compatibility",
+            is_read: false,
+          });
+        } catch (aiErr: any) {
+          console.error("AI request failed:", aiErr);
+          await supabase.from("messages").insert({
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+            message: "⚠️ AI could not respond right now.",
+            is_ai: true,
+            reply_to_message: inserted.id,
+            mode: "compatibility",
+            is_read: false,
+          });
+        }
+      }
+
+      setInput("");
+      setReplyToMessage(null);
+      scrollToBottom();
+    } catch (err: any) {
+      console.error("Send failed:", err);
+      Alert.alert("Error", err?.message ?? "Failed to send message");
     }
   };
 
   const handleToggleReply = (messageText: string) => {
-    if (replyToMessage === messageText) {
-      setReplyToMessage(null);
-    } else {
-      setReplyToMessage(messageText);
-    }
+    setReplyToMessage((prev) => (prev === messageText ? null : messageText));
   };
 
   const renderItem = ({ item }: { item: Message }) => {
@@ -351,11 +338,30 @@ export default function ChatScreen({
     const isBotMsg = item.is_ai;
     const isReplyMsg = !!item.reply_to_message;
 
+    const displayMessage =
+      !privacyMode && item.mode === "privacy" ? "[Encrypted message]" : item.message;
+      if (isMyMsg && isBotMsg) {
+        // 🔹 AI reply styled differently
+        return (
+          <View
+            style={[
+              styles.messageWrapper,
+              styles.aiWrapper,
+            ]}
+          >
+            <Text style={styles.aiMsg}>{displayMessage}</Text>
+            <Text style={styles.timeText}>
+              {new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </Text>
+          </View>
+        );
+      }
+
     if (isBotMsg) {
       return (
         <View style={{ alignItems: 'center', marginVertical: 6 }}>
           <View style={[styles.botMsg, { maxWidth: '80%' }]}>
-            <Text style={styles.botMsgText}>{item.message}</Text>
+            <Text style={styles.botMsgText}>{displayMessage}</Text>
           </View>
         </View>
       );
@@ -378,24 +384,21 @@ export default function ChatScreen({
             </View>
           )}
           <Text
-            style={
-              isMyMsg ? styles.myMsg : styles.theirMsg
-            }
+            style={[
+              isMyMsg ? styles.myMsg : styles.theirMsg,
+              !privacyMode && item.mode === "privacy" && { fontStyle: "italic", color: "#888" },
+            ]}
           >
-            {item.message}
+            {displayMessage}
           </Text>
           <Text style={styles.timeText}>
-            {new Date(item.created_at).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            {new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </Text>
         </View>
       </TouchableOpacity>
     );
   };
 
-  // Define theme styles dynamically
   const themeStyles = privacyMode ? darkTheme : lightTheme;
 
   return (
@@ -405,14 +408,12 @@ export default function ChatScreen({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
+        {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.title, themeStyles.title]}>Chat with {receiverPhone}</Text>
           <TouchableOpacity
-            onPress={() => setPrivacyMode(!privacyMode)}
-            style={[
-              styles.privacyToggleBtn,
-              { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' },
-            ]}
+            onPress={() => setPrivacyMode((p) => !p)}
+            style={[styles.privacyToggleBtn, { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' }]}
           >
             <Text style={styles.privacyToggleText}>
               {privacyMode ? 'Privacy ON' : 'Compatibility'}
@@ -420,18 +421,18 @@ export default function ChatScreen({
           </TouchableOpacity>
         </View>
 
+        {/* Messages */}
         <FlatList
           ref={messageRef}
           data={messages}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{
-            flexGrow: 1,
-            justifyContent: "flex-end",
-            paddingVertical: 8,
-          }}
+          contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end", paddingVertical: 8 }}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={scrollToBottom}
         />
 
+        {/* Reply Banner */}
         {replyToMessage && (
           <View style={styles.replyBanner}>
             <Text style={styles.replyBannerText}>Replying to: {replyToMessage}</Text>
@@ -441,13 +442,17 @@ export default function ChatScreen({
           </View>
         )}
 
+        {/* Input */}
         <View style={[styles.inputContainer, themeStyles.inputContainer]}>
           <TextInput
-            placeholder="Type your message... (start with /ai for AI)"
+            placeholder="Type your message..."
             placeholderTextColor={privacyMode ? '#bbb' : '#5c5340'}
             style={[styles.input, themeStyles.input]}
             value={input}
             onChangeText={setInput}
+            returnKeyType="send"
+            onSubmitEditing={sendMessage}
+            blurOnSubmit={false}
           />
           <TouchableOpacity style={styles.button} onPress={sendMessage}>
             <Text style={styles.buttonText}>➤</Text>
@@ -458,106 +463,32 @@ export default function ChatScreen({
   );
 }
 
+// --- Styles ---
 const styles = StyleSheet.create({
-  safeArea: { 
-    flex: 1, 
-  },
-  container: { 
-    flex: 1, 
-    paddingHorizontal: 12, 
-  },
+  safeArea: { flex: 1 },
+  container: { flex: 1, paddingHorizontal: 12 },
   header: {
     paddingVertical: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderColor: "#c1b590",
+    borderColor: "#c1b590"
   },
-  title: { 
-    fontSize: 20, 
-    fontFamily: "Kreon-Bold", 
-  },
-  privacyToggleBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  privacyToggleText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
-  messageWrapper: {
-    maxWidth: "75%",
-    padding: 8,
-    marginVertical: 4,
-    borderRadius: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  myWrapper: {
-    alignSelf: "flex-end",
-    backgroundColor: "#DCF8C6",
-    borderBottomRightRadius: 4,
-  },
-  theirWrapper: {
-    alignSelf: "flex-start",
-    backgroundColor: "#ECECEC",
-    borderBottomLeftRadius: 4,
-  },
-  myMsg: { 
-    fontFamily: "Kreon-Regular", 
-    color: "#000", 
-    fontSize: 16 
-  },
-  theirMsg: { 
-    fontFamily: "Kreon-Regular", 
-    color: "#000", 
-    fontSize: 16 
-  },
-  botMsg: {
-    backgroundColor: '#FFE7C2',
-    padding: 10,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  botMsgText: {
-    fontFamily: 'Kreon-Regular',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    color: '#000',
-    fontSize: 16,
-  },
-  timeText: {
-    fontSize: 10,
-    color: "#555",
-    marginTop: 2,
-    alignSelf: "flex-end",
-  },
-  replyMsgContainer: {
-    borderLeftWidth: 3,
-    borderLeftColor: '#4a90e2',
-    paddingLeft: 8,
-  },
-  replyToContainer: {
-    backgroundColor: '#e1eaff',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  replyToText: {
-    color: '#4a90e2',
-    fontStyle: 'italic',
-    fontSize: 12,
-    fontFamily: "Kreon-Regular",
-  },
+  title: { fontSize: 20, fontFamily: "Kreon-Bold" },
+  privacyToggleBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
+  privacyToggleText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
+  messageWrapper: { maxWidth: "75%", padding: 8, marginVertical: 4, borderRadius: 16 },
+  myWrapper: { alignSelf: "flex-end", backgroundColor: "#DCF8C6", borderBottomRightRadius: 4 },
+  theirWrapper: { alignSelf: "flex-start", backgroundColor: "#ECECEC", borderBottomLeftRadius: 4 },
+  myMsg: { fontFamily: "Kreon-Regular", color: "#000", fontSize: 16 },
+  theirMsg: { fontFamily: "Kreon-Regular", color: "#000", fontSize: 16 },
+  botMsg: { backgroundColor: '#FFE7C2', padding: 10, borderRadius: 12 },
+  botMsgText: { fontFamily: 'Kreon-Regular', fontStyle: 'italic', textAlign: 'center', fontSize: 16 },
+  timeText: { fontSize: 10, color: "#555", marginTop: 2, alignSelf: "flex-end" },
+  replyMsgContainer: { borderLeftWidth: 3, borderLeftColor: '#4a90e2', paddingLeft: 8 },
+  replyToContainer: { backgroundColor: '#e1eaff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginBottom: 4 },
+  replyToText: { color: '#4a90e2', fontStyle: 'italic', fontSize: 12, fontFamily: "Kreon-Regular" },
   replyBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -565,19 +496,10 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 6,
     marginBottom: 6,
-    justifyContent: 'space-between',
+    justifyContent: 'space-between'
   },
-  replyBannerText: {
-    color: '#00796b',
-    flex: 1,
-    fontFamily: "Kreon-Regular",
-  },
-  cancelReplyText: {
-    color: 'red',
-    marginLeft: 12,
-    fontWeight: 'bold',
-    fontFamily: "Kreon-Bold",
-  },
+  replyBannerText: { color: '#00796b', flex: 1, fontFamily: "Kreon-Regular" },
+  cancelReplyText: { color: 'red', marginLeft: 12, fontWeight: 'bold', fontFamily: "Kreon-Bold" },
   inputContainer: {
     flexDirection: "row",
     gap: 4,
@@ -585,7 +507,7 @@ const styles = StyleSheet.create({
     padding: 4,
     borderTopWidth: 1,
     borderColor: "#c1b590",
-    marginBottom: 8,
+    marginBottom: 8
   },
   input: {
     flex: 1,
@@ -594,7 +516,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 25,
     fontFamily: "Kreon-Regular",
-    borderColor: "#aaa",
+    borderColor: "#aaa"
   },
   button: {
     backgroundColor: "#b2ffe2",
@@ -602,55 +524,38 @@ const styles = StyleSheet.create({
     height: 45,
     borderRadius: 25,
     alignItems: "center",
-    justifyContent: "center",
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 1, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    justifyContent: "center"
   },
-  buttonText: { 
-    fontSize: 18, 
-    color: "#000", 
-    fontWeight: "bold" 
+  buttonText: { fontSize: 18, color: "#000", fontWeight: "bold" },
+  aiWrapper: {
+    alignSelf: "flex-end",
+    backgroundColor: "#FFD580", // soft orange
+    borderBottomRightRadius: 4,
+    padding: 8,
+    marginVertical: 4,
+    borderRadius: 16,
+    maxWidth: "75%",
+  },
+  aiMsg: {
+    fontFamily: "Kreon-Regular",
+    color: "#000",
+    fontSize: 16,
+    fontStyle: "italic",
   },
 });
 
 const lightTheme = StyleSheet.create({
-  safeArea: {
-    backgroundColor: '#DCD0A8',
-  },
-  container: {
-    backgroundColor: '#DCD0A8',
-  },
-  title: {
-    color: '#000',
-  },
-  inputContainer: {
-    backgroundColor: '#DCD0A8',
-  },
-  input: {
-    backgroundColor: '#fff',
-    color: '#000',
-  },
+  safeArea: { backgroundColor: '#DCD0A8' },
+  container: { backgroundColor: '#DCD0A8' },
+  title: { color: '#000' },
+  inputContainer: { backgroundColor: '#DCD0A8' },
+  input: { backgroundColor: '#fff', color: '#000' },
 });
 
 const darkTheme = StyleSheet.create({
-  safeArea: {
-    backgroundColor: '#121212',
-  },
-  container: {
-    backgroundColor: '#121212',
-  },
-  title: {
-    color: '#fff',
-  },
-  inputContainer: {
-    backgroundColor: '#121212',
-  },
-  input: {
-    backgroundColor: '#333',
-    color: '#eee',
-    borderColor: '#555',
-  },
+  safeArea: { backgroundColor: '#121212' },
+  container: { backgroundColor: '#121212' },
+  title: { color: '#fff' },
+  inputContainer: { backgroundColor: '#121212' },
+  input: { backgroundColor: '#333', color: '#eee', borderColor: '#555' },
 });
