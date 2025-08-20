@@ -288,7 +288,7 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       if (!privacyMode && text.startsWith("/ai ")) {
         const query = text.slice(4).trim();
         try {
-          const resp = await axios.post("https://a10200a1987b.ngrok-free.app/ask-ai", {
+          const resp = await axios.post("https://44c7dd299c15.ngrok-free.app/ask-ai", {
             query,
             sender_phone: senderPhone,
             receiver_phone: receiverPhone,
