@@ -1,7 +1,12 @@
 // ChatScreen.tsx
 // IMPORTANT: This MUST be first to fix "no PRNG" for libs like tweetnacl
 import 'react-native-get-random-values';
+import * as ImagePicker from "expo-image-picker";
+import { Image } from "react-native";
 
+import { Linking } from "react-native";
+
+import * as DocumentPicker from "expo-document-picker";
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
@@ -21,6 +26,7 @@ import { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
 import { getOrCreateKeys, encryptMessage, decryptMessage } from "../../lib/encrypt";
 import axios from 'axios';
+import * as FileSystem from "expo-file-system";
 
 type Message = {
   id: string;
@@ -34,7 +40,12 @@ type Message = {
   is_read: boolean;
   reply_to_message?: string;
   is_ai?: boolean;
+  media_url?: string; // add
+  media_type?: "image" | "video" | "document"; // add
+  file_name?: string; // add
+  file_size?: number; // add
 };
+
 
 const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
 
@@ -54,7 +65,79 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
   const receiverPhone = normalizePhone((id as string) || "");
   const senderPhone = session?.user?.phone ? normalizePhone(session.user.phone) : "";
 
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+  
   // Keep track of which chat is active (for read receipts)
+
+
+  const uploadFileToSupabase = async (uri: string, fileName: string, mimeType: string) => {
+    // Read file as base64
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  
+    const filePath = `${Date.now()}-${fileName}`;
+  
+    const { data, error } = await supabase.storage
+      .from("chat-files")
+      .upload(filePath, decode(base64), {
+        contentType: mimeType,
+        upsert: true,
+      });
+  
+    if (error) throw error;
+  
+    const { data: publicUrlData } = supabase.storage
+      .from("chat-files")
+      .getPublicUrl(filePath);
+  
+    return publicUrlData.publicUrl;
+  };
+  
+  // helper: base64 → Uint8Array
+  function decode(base64: string) {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+  
+
+  const insertMediaMessage = async (
+    media_url: string,
+    media_type: "image" | "video" | "document",
+    file_name?: string,
+    
+  ) => {
+    if (!senderPhone || !receiverPhone) return;
+  
+    try {
+      const { error } = await supabase.from("messages").insert({
+        sender_phone: senderPhone,
+        receiver_phone: receiverPhone,
+        message: "",
+        media_url,
+        media_type,
+        file_name,
+        
+        is_read: false,
+        mode: privacyMode ? "privacy" : "compatibility",
+      });
+  
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Media message insert error:", err);
+      Alert.alert("Error", err.message || "Failed to send media");
+    }
+  };
+  
   useEffect(() => {
     activeChatPhone.current = receiverPhone;
     return () => { activeChatPhone.current = null; };
@@ -160,6 +243,8 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       );
     };
 
+   
+    
     const loadMessages = async () => {
       const { data, error } = await supabase
         .from("messages")
@@ -270,7 +355,7 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         nonce = encrypted.nonce;
       }
 
-      // 🔹 Step 1: Insert user’s message
+      // 🔹 Step 1: Insert user's message
       const { data: inserted, error } = await supabase.from("messages").insert({
         sender_phone: senderPhone,
         receiver_phone: receiverPhone,
@@ -329,9 +414,155 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
     }
   };
 
+  // Handle multimedia attachment
+  const handleMultimedia = () => {
+    Alert.alert("Attach Media", "Choose media type", [
+      {
+        text: "Camera",
+        onPress: async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== "granted") return alert("Camera permission is required");
+          const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            quality: 1,
+          });
+          if (!result.canceled) {
+            const asset = result.assets[0];
+            const fileName = asset.fileName || `camera-${Date.now()}.jpg`;
+            const mimeType = asset.type === "video" ? "video/mp4" : "image/jpeg";
+            try {
+              const url = await uploadFileToSupabase(asset.uri, fileName, mimeType);
+              await insertMediaMessage(
+                url,
+                mimeType.includes("video") ? "video" : "image",
+                fileName,
+             
+
+              );
+            } catch (err: any) {
+              Alert.alert("Upload Failed", err.message || "Error uploading media");
+            }
+          }
+        },
+      },
+      {
+        text: "Gallery",
+        onPress: async () => {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== "granted") return alert("Gallery permission is required");
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            quality: 1,
+          });
+          if (!result.canceled) {
+            const asset = result.assets[0];
+            const fileName = asset.fileName || `gallery-${Date.now()}`;
+            const mimeType = asset.type === "video" ? "video/mp4" : "image/jpeg";
+            try {
+              const url = await uploadFileToSupabase(asset.uri, fileName, mimeType);
+              await insertMediaMessage(
+                url,
+                mimeType.includes("video") ? "video" : "image",
+                fileName,
+                
+              );
+            } catch (err: any) {
+              Alert.alert("Upload Failed", err.message || "Error uploading media");
+            }
+          }
+        },
+      },
+      {
+        text: "Document",
+        onPress: async () => {
+          const result = await DocumentPicker.getDocumentAsync({
+            type: "*/*",
+            copyToCacheDirectory: true,
+          });
+          if (!result.canceled) {
+            const file = result.assets[0];
+            try {
+              const url = await uploadFileToSupabase(
+                file.uri,
+                file.name,
+                file.mimeType || "application/octet-stream"
+              );
+              await insertMediaMessage(url, "document", file.name);
+            } catch (err: any) {
+              Alert.alert("Upload Failed", err.message || "Error uploading document");
+            }
+          }
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+  
   const handleToggleReply = (messageText: string) => {
     setReplyToMessage((prev) => (prev === messageText ? null : messageText));
   };
+  const renderMediaContent = (item: Message) => {
+    if (!item.media_url) return null;
+  
+    switch (item.media_type) {
+      case 'image':
+        return (
+          <TouchableOpacity onPress={() => {/* Open full screen image */}}>
+            <Image
+              source={{ uri: item.media_url }}
+              resizeMode="cover"
+              style={{ width: 200, height: 200, borderRadius: 10 }} // <== add this
+            />
+          </TouchableOpacity>
+        );
+  
+      case 'video':
+        return (
+          <TouchableOpacity onPress={() => {/* Play video */}}>
+            <Image
+              source={{ uri: item.media_url }}
+              resizeMode="cover"
+            />
+            <View>
+              <Text>▶️</Text>
+            </View>
+          </TouchableOpacity>
+        );
+  
+      case 'document':
+      return (
+        <TouchableOpacity
+          onPress={() => {
+            if (item.media_url) {
+              Linking.openURL(item.media_url);
+            } else {
+              console.warn('No URL available');
+              // Optionally alert user or do nothing
+            }
+          }}
+        >
+          <View>
+            <Text>📄</Text>
+          </View>
+          <View>
+            <Text numberOfLines={1}>
+              {item.file_name || 'Document'}
+            </Text>
+            <Text>
+              {item.file_size ? formatFileSize(item.file_size) : 'Unknown size'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      );
+    
+  
+      default:
+        return null;
+    }
+  };
+  
 
   const renderItem = ({ item }: { item: Message }) => {
     const isMyMsg = item.sender_phone === senderPhone;
@@ -383,20 +614,29 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
               </Text>
             </View>
           )}
-          <Text
-            style={[
-              isMyMsg ? styles.myMsg : styles.theirMsg,
-              !privacyMode && item.mode === "privacy" && { fontStyle: "italic", color: "#888" },
-            ]}
-          >
-            {displayMessage}
-          </Text>
+    
+          {renderMediaContent(item)}
+    
+          {!!displayMessage && (
+            <Text
+              style={[
+                isMyMsg ? styles.myMsg : styles.theirMsg,
+                !privacyMode && item.mode === "privacy" && { fontStyle: "italic", color: "#888" },
+              ]}
+            >
+              {displayMessage}
+            </Text>
+          )}
           <Text style={styles.timeText}>
-            {new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {new Date(item.created_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
           </Text>
         </View>
       </TouchableOpacity>
     );
+    
   };
 
   const themeStyles = privacyMode ? darkTheme : lightTheme;
@@ -444,8 +684,13 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
 
         {/* Input */}
         <View style={[styles.inputContainer, themeStyles.inputContainer]}>
+          {/* Multimedia Button */}
+          <TouchableOpacity style={styles.mediaButton} onPress={handleMultimedia}>
+            <Text style={styles.mediaIcon}>📎</Text>
+          </TouchableOpacity>
+          
           <TextInput
-            placeholder="Type your message..."
+            placeholder="Type your message or tap 📎 for media..."
             placeholderTextColor={privacyMode ? '#bbb' : '#5c5340'}
             style={[styles.input, themeStyles.input]}
             value={input}
@@ -508,6 +753,19 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: "#c1b590",
     marginBottom: 8
+  },
+  mediaButton: {
+    backgroundColor: "#e0e0e0",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 4
+  },
+  mediaIcon: {
+    fontSize: 18,
+    transform: [{ rotate: '45deg' }] // Rotates the paperclip icon for better visual appeal
   },
   input: {
     flex: 1,
