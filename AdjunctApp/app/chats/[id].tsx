@@ -20,7 +20,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams,useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
@@ -52,10 +52,13 @@ const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
 export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone: string) => void }) {
   const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [contactName, setContactName] = useState<string>("");
+  const [loadingContact, setLoadingContact] = useState<boolean>(true);
   const [replyToMessage, setReplyToMessage] = useState<string | null>(null);
   const [privacyMode, setPrivacyMode] = useState(false);
 
@@ -456,7 +459,37 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       // 🔹 Step 2: If it's an AI query in compatibility mode → call Flask AI
       if (!privacyMode && text.startsWith("/ai ")) {
         const query = text.slice(4).trim();
-        handleAI(query)
+        try {
+          const resp = await axios.post("https://a10200a1987b.ngrok-free.app/ask-ai", {
+            query,
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+          });
+
+          const aiReply = resp.data.reply || "⚠️ AI could not respond.";
+
+          // 🔹 Step 3: Insert AI reply as same user, but `is_ai=true`
+          await supabase.from("messages").insert({
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+            message: aiReply,
+            is_ai: true,
+            reply_to_message: inserted.id, // link back to the /ai query
+            mode: "compatibility",
+            is_read: false,
+          });
+        } catch (aiErr: any) {
+          console.error("AI request failed:", aiErr);
+          await supabase.from("messages").insert({
+            sender_phone: senderPhone,
+            receiver_phone: receiverPhone,
+            message: "⚠️ AI could not respond right now.",
+            is_ai: true,
+            reply_to_message: inserted.id,
+            mode: "compatibility",
+            is_read: false,
+          });
+        }
       }
 
       setInput("");
@@ -700,13 +733,20 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       <KeyboardAvoidingView
         style={[styles.container, themeStyles.container]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         {/* Header */}
-        <View style={styles.header}>
-          <Text style={[styles.title, themeStyles.title]}>Chat with {receiverPhone}</Text>
+       <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>&lt;</Text>
+          </TouchableOpacity>
+          <View style={styles.titleContainer}>
+            <Text style={[styles.title, themeStyles.title]}>
+              {contactName || receiverPhone}
+            </Text>
+          </View>
           <TouchableOpacity
-            onPress={() => setPrivacyMode((p) => !p)}
+            onPress={() => setPrivacyMode(!privacyMode)}
             style={[styles.privacyToggleBtn, { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' }]}
           >
             <Text style={styles.privacyToggleText}>
@@ -774,6 +814,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: "#c1b590"
   },
+  titleContainer: { flex: 1, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 20, fontFamily: "Kreon-Bold" },
   privacyToggleBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
   privacyToggleText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
@@ -788,6 +829,8 @@ const styles = StyleSheet.create({
   replyMsgContainer: { borderLeftWidth: 3, borderLeftColor: '#4a90e2', paddingLeft: 8 },
   replyToContainer: { backgroundColor: '#e1eaff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginBottom: 4 },
   replyToText: { color: '#4a90e2', fontStyle: 'italic', fontSize: 12, fontFamily: "Kreon-Regular" },
+  backButton: { position: "absolute", left: 0, top: 10, width: 44, height: "100%", alignItems: "center", justifyContent: "center", zIndex: 1 },
+  backButtonText: { fontSize: 28, color: "#000", fontFamily: "Kreon-Bold" },
   replyBanner: {
     flexDirection: 'row',
     alignItems: 'center',

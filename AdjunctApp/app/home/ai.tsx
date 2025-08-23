@@ -109,7 +109,7 @@ const AIMessagingApp: React.FC = () => {
   
     try {
       const response = await axios.post(
-        'https://fabc3f159498.ngrok-free.app/ask-ai',
+        'https://a10200a1987b.ngrok-free.app/ask-ai',
         {
           query: inputText,
           sender_phone: userPhone,

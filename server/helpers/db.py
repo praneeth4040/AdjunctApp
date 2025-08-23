@@ -12,19 +12,56 @@ class Database:
         Retrieve the latest messages exchanged between two phone numbers,
         but return them in chronological order.
         """
-        result = self.client.table("messages") \
-            .select("*") \
+        result = (
+            self.client.table("messages")
+            .select("*")
             .or_(
                 f"and(sender_phone.eq.{sender_phone},receiver_phone.eq.{receiver_phone})"
                 f",and(sender_phone.eq.{receiver_phone},receiver_phone.eq.{sender_phone})"
-            ) \
-            .order("created_at", desc=True) \
-            .limit(limit) \
+            )
+            .order("created_at", desc=True)
+            .limit(limit)
             .execute()
+        )
 
         if result.data:
             result.data.reverse()
 
         return result
-    
 
+    def get_profile(self, phone_number: str):
+        """
+        Retrieve a single profile by phone number.
+        """
+        result = (
+            self.client.table("profiles")
+            .select("*")
+            .eq("phone_number", phone_number)
+            .single()
+            .execute()
+        )
+        return result.data if result.data else None
+
+    def send_message(
+        self,
+        sender_phone: str,
+        receiver_phone: str,
+        message: str,
+        is_ai: bool = True,
+        reply_to_message: str = None
+    ):
+        """
+        Send a message to a user (inserts into messages table).
+        """
+        payload = {
+            "sender_phone": sender_phone,
+            "receiver_phone": receiver_phone,
+            "message": message,
+            "is_ai": is_ai,
+        }
+
+        if reply_to_message:
+            payload["reply_to_message"] = reply_to_message
+
+        result = self.client.table("messages").insert(payload).execute()
+        return result.data if result.data else None

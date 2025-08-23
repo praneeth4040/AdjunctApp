@@ -1,7 +1,10 @@
-# app.py
-
 from flask import Flask, request, jsonify
 from gemini import ai_response
+import firebase_admin
+from firebase_admin import credentials, messaging
+from supabase import create_client, Client
+from datetime import datetime
+from supabase import supabase
 
 app = Flask(__name__)
 
@@ -25,6 +28,9 @@ def ask_ai():
 
     ai_reply = ai_response(query, sender_phone, receiver_phone)
     return jsonify({"reply": ai_reply})
+
+# 🔔 New endpoint: Send Notification
+
 
 if __name__ == '__main__':
     app.run(debug=True)

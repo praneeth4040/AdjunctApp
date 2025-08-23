@@ -19,12 +19,34 @@ get_chat_with_profiles_tool = types.Tool(
         )
     ]
 )
-
+# --- Tool: Send Message to User ---
+send_message_to_user_tool = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="send_message_to_user",
+            description="Send a message from the AI to a particular user identified by their phone number.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "receiver_phone": {
+                        "type": "string",
+                        "description": "The phone number of the recipient."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The message text to send to the recipient."
+                    }
+                },
+                "required": ["receiver_phone", "message"]
+            }
+        )
+    ]
+)
 # --- Tool: Send Email ---
 send_email_tool = types.Tool(
     function_declarations=[
         types.FunctionDeclaration(
-            name="send_email",
+            name="send_email_with_attachments",
             description="Send an email immediately to one or more recipients, with optional CC, BCC, and attachments.",
             parameters={
                 "type": "object",
@@ -81,7 +103,7 @@ send_email_tool = types.Tool(
 
     ]
 )
-from google.genai import types
+
 
 # --- Tool: Set or Update User Mode ---
 set_or_update_user_mode_tool = types.Tool(
@@ -109,4 +131,4 @@ set_or_update_user_mode_tool = types.Tool(
 )
 
 # --- Export list for easy import ---
-all_tools = [get_chat_with_profiles_tool, send_email_tool,set_or_update_user_mode_tool]
+all_tools = [get_chat_with_profiles_tool, send_email_tool]
