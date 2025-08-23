@@ -4,7 +4,7 @@ import firebase_admin
 from firebase_admin import credentials, messaging
 from supabase import create_client, Client
 from datetime import datetime
-from supabase import supabase
+
 
 app = Flask(__name__)
 

@@ -131,4 +131,4 @@ set_or_update_user_mode_tool = types.Tool(
 )
 
 # --- Export list for easy import ---
-all_tools = [get_chat_with_profiles_tool, send_email_tool]
+all_tools = [get_chat_with_profiles_tool, send_email_tool,set_or_update_user_mode_tool]
