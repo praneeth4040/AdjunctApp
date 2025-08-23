@@ -2,6 +2,7 @@ import React from "react";
 import { View, TouchableOpacity, StyleSheet } from "react-native";
 import { Slot, useRouter, useSegments } from "expo-router";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Layout() {
   const router = useRouter();
@@ -9,14 +10,14 @@ export default function Layout() {
   const current = segments[1] || "chats"; // detect current page inside /home/*
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       {/* This renders the current route (chats.tsx / ai.tsx) */}
       <View style={styles.content}>
         <Slot />
       </View>
 
       {/* Fixed Footer */}
-      <View style={styles.footer}>
+      <SafeAreaView edges={["bottom"]} style={styles.footer}>
         <TouchableOpacity
           onPress={() => router.push("/home/chats")}
           style={styles.tab}
@@ -38,18 +39,18 @@ export default function Layout() {
             color={current === "ai" ? "#007AFF" : "#dcd0a8"}
           />
         </TouchableOpacity>
-      </View>
-    </View>
+      </SafeAreaView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { flex: 1, backgroundColor: "#f9f9f9" },
+  container: { flex: 1, backgroundColor: "#f9f9f9" },
+  content: { flex: 1 },
   footer: {
     flexDirection: "row",
     justifyContent: "space-around",
-    paddingVertical: 20,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderColor: "#ddd",
     backgroundColor: "#fff",

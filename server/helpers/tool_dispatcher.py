@@ -1,6 +1,7 @@
 # tools/dispatcher.py
+from email import message
 from tools.emails import send_email_with_attachments
-from tools.get_chat_with_profiles import get_chat_with_profiles_tool
+from tools.get_chat_with_profiles import get_chat_with_profiles_tool , send_message_to_user
 # import other tools here as you create them
 
 def dispatch_tool_call(tool_name: str, args: dict, sender_phone: str = None, receiver_phone: str = None):
@@ -16,11 +17,7 @@ def dispatch_tool_call(tool_name: str, args: dict, sender_phone: str = None, rec
     try:
         # Match tool name and call appropriate function
         if tool_name == "get_chat_with_profiles":
-            return get_chat_with_profiles_tool({
-                **args,
-                "sender_phone": sender_phone,
-                "receiver_phone": receiver_phone
-            })
+            return get_chat_with_profiles_tool(sender_phone,receiver_phone,args.get("limit",10))
 
         elif tool_name == "send_email_with_attachments":
             # Directly map dict keys to function params
@@ -32,7 +29,15 @@ def dispatch_tool_call(tool_name: str, args: dict, sender_phone: str = None, rec
                 body=args.get("body", ""),
                 attachments=args.get("attachments")
             )
-
+        elif tool_name =="send_message_to_user":
+            message = args.get("message")
+            is_ai = args.get("is_ai",True)
+            return send_message_to_user(
+                sender_phone,
+                receiver_phone,
+                message,
+                is_ai
+            )
         # Add more tool mappings here
         else:
             return {"error": f"Tool '{tool_name}' not found"}
