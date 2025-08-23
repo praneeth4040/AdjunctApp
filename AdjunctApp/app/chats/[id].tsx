@@ -65,6 +65,26 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
   const receiverPhone = normalizePhone((id as string) || "");
   const senderPhone = session?.user?.phone ? normalizePhone(session.user.phone) : "";
 
+  const getUserMode = async (phone: string): Promise<string | null> => {
+    try {
+      const { data, error } = await supabase
+        .from("usersmodes")
+        .select("mode")
+        .eq("phone", senderPhone)
+        .single();
+  
+      if (error) {
+        console.error("Error fetching user mode:", error);
+        return null;
+      }
+  
+      return data?.mode || null;
+    } catch (err) {
+      console.error("getUserMode error:", err);
+      return null;
+    }
+  };
+  
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -275,20 +295,23 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         { event: "INSERT", schema: "public", table: "messages" },
         async (payload) => {
           const newMsg = payload.new as Message;
-
+      
+          // 🚫 Skip AI messages to prevent loops
+          if (newMsg.is_ai) return;
+      
           const isInCurrentChat =
             (newMsg.sender_phone === senderPhone && newMsg.receiver_phone === receiverPhone) ||
             (newMsg.sender_phone === receiverPhone && newMsg.receiver_phone === senderPhone);
-
+      
           if (!isInCurrentChat) return;
-
+      
           const decrypted = (await decryptMessages([newMsg]))[0];
           if (!mounted) return;
-
+      
           setMessages((prev) => [...prev, decrypted]);
           scrollToBottom();
-
-          // Auto mark read for incoming messages to this active chat
+      
+          // Auto mark read for incoming messages
           if (
             newMsg.sender_phone === receiverPhone &&
             activeChatPhone.current === receiverPhone
@@ -299,9 +322,29 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
             );
             onMessagesRead?.(receiverPhone);
           }
+      
+          try {
+            const { data: modeRow } = await supabase
+              .from("usersmodes")
+              .select("mode")
+              .eq("phone", receiverPhone)
+              .single();
+      
+            if (!modeRow) return;
+            const mode = modeRow.mode;
+      
+            if (mode === "active") {
+              await handleAI(decrypted.message);
+            } else if (mode === "semiactive") {
+              // maybe add special conditions here later
+              await handleAI(decrypted.message);
+            }
+          } catch (err) {
+            console.error("AI Auto-responder error:", err);
+          }
         }
       )
-      .on(
+            .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "messages" },
         (payload) => {
@@ -327,7 +370,48 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       return;
     }, [markMessagesAsRead])
   );
-
+  const handleAI = async (query: string): Promise<string> => {
+    try {
+      // Step 1: Call backend AI
+      const resp = await axios.post("https://fabc3f159498.ngrok-free.app/ask-ai", {
+        query,
+        sender_phone: senderPhone,
+        receiver_phone: receiverPhone,
+      });
+  
+      const reply = resp.data.reply || "⚠️ AI could not respond.";
+  
+      // Step 2: Insert AI reply into Supabase messages table
+      const { data, error } = await supabase
+        .from("messages")
+        .insert([
+          {
+            sender_phone: receiverPhone,       // user who triggered AI
+            receiver_phone: senderPhone,   // chat partner
+            message: reply,                  // AI generated reply
+            is_ai: true,                     // ✅ mark as AI response
+            is_read: false,
+            created_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single();
+  
+      if (error) {
+        console.error("Supabase insert error:", error);
+      } else {
+        console.log("AI message inserted:", data);
+      }
+  
+      // Step 3: Return the AI reply for immediate usage
+      return reply;
+    } catch (error: any) {
+      console.error("AI request failed:", error);
+      return "⚠️ AI could not respond right now.";
+    }
+  };
+  
+  
   // Send a message (encrypted or not)
   const sendMessage = async () => {
     if (!input.trim() || !senderPhone || !receiverPhone) return;
@@ -372,37 +456,7 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
       // 🔹 Step 2: If it's an AI query in compatibility mode → call Flask AI
       if (!privacyMode && text.startsWith("/ai ")) {
         const query = text.slice(4).trim();
-        try {
-          const resp = await axios.post("https://a10200a1987b.ngrok-free.app/ask-ai", {
-            query,
-            sender_phone: senderPhone,
-            receiver_phone: receiverPhone,
-          });
-
-          const aiReply = resp.data.reply || "⚠️ AI could not respond.";
-
-          // 🔹 Step 3: Insert AI reply as same user, but `is_ai=true`
-          await supabase.from("messages").insert({
-            sender_phone: senderPhone,
-            receiver_phone: receiverPhone,
-            message: aiReply,
-            is_ai: true,
-            reply_to_message: inserted.id, // link back to the /ai query
-            mode: "compatibility",
-            is_read: false,
-          });
-        } catch (aiErr: any) {
-          console.error("AI request failed:", aiErr);
-          await supabase.from("messages").insert({
-            sender_phone: senderPhone,
-            receiver_phone: receiverPhone,
-            message: "⚠️ AI could not respond right now.",
-            is_ai: true,
-            reply_to_message: inserted.id,
-            mode: "compatibility",
-            is_read: false,
-          });
-        }
+        handleAI(query)
       }
 
       setInput("");

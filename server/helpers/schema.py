@@ -78,8 +78,35 @@ send_email_tool = types.Tool(
                 "required": ["to", "subject", "body"]
             }
         )
+
+    ]
+)
+from google.genai import types
+
+# --- Tool: Set or Update User Mode ---
+set_or_update_user_mode_tool = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="set_or_update_user_mode",
+            description="Set or update a user's activity mode (offline, semiactive, active). Creates user if not exists.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_phone": {
+                        "type": "string",
+                        "description": "Phone number of the user."
+                    },
+                    "desired_mode": {
+                        "type": "string",
+                        "enum": ["offline", "semiactive", "active"],
+                        "description": "Desired mode to set for the user."
+                    }
+                },
+                "required": ["user_phone", "desired_mode"]
+            }
+        )
     ]
 )
 
 # --- Export list for easy import ---
-all_tools = [get_chat_with_profiles_tool, send_email_tool]
+all_tools = [get_chat_with_profiles_tool, send_email_tool,set_or_update_user_mode_tool]
