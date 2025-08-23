@@ -40,6 +40,7 @@
     const [contactsMap, setContactsMap] = useState<Record<string, string>>({});
     const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
     const router = useRouter();
+    const [isSearchActive, setIsSearchActive] = useState(false);
 
     const normalizePhone = (phone?: string) =>
       phone?.replace(/\D/g, "") || "";
@@ -272,7 +273,12 @@
               <Text style={styles.username}>{userName || "Loading..."}</Text>
             </View>
             <View style={styles.headerIcons}>
-              <Ionicons name="search" size={24} color="black" style={{ marginRight: 16 }} />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={() => setIsSearchActive(!isSearchActive)}
+              >
+                <Ionicons name="search" size={24} color="black" />
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.profileCircle}
                 onPress={() => router.push("/home/settings")}
@@ -281,6 +287,7 @@
               </TouchableOpacity>
             </View>
           </View>
+          
           <View style={styles.chatsSection}>
             <FlatList
               data={conversations}
@@ -386,5 +393,9 @@
       color: "white",
       fontSize: 12,
       fontWeight: "bold",
+    },
+    searchButton: {
+      marginRight: 16,
+      padding: 4,
     },
   });
