@@ -182,12 +182,13 @@ const AIMessagingApp: React.FC = () => {
     setLoading(true);
 
     const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('sender_phone', userPhone)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
+    .from('messages')
+    .select('*')
+    .or(`sender_phone.eq.${userPhone},is_ai.eq.true`) // fetch both user + AI
+    .order('created_at', { ascending: false })
+    .limit(50);
+  
+    console.log("fetched messages",data)
     if (error) {
       console.error(error.message);
       setLoading(false);
@@ -198,18 +199,20 @@ const AIMessagingApp: React.FC = () => {
     let lastUserMessage: any = null;
 
     data.reverse().forEach((msg) => {
+      console.log("checking mesge",msg)
       if (!msg.is_ai) {
         lastUserMessage = msg;
       } else if (msg.is_ai && lastUserMessage) {
         pairs.push({
           id: msg.id,
-          userText: lastUserMessage.text,
-          aiText: msg.text,
+          userText: lastUserMessage.message,
+          aiText: msg.message,
           createdAt: msg.created_at,
         });
         lastUserMessage = null;
       }
     });
+    console.log("buit pairs", pairs)
 
     setRecentActions(pairs.reverse());
     setLoading(false);
