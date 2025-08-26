@@ -74,6 +74,12 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
     uri: '',
     type: 'image'
   });
+  const [selectionMode, setSelectionMode] = useState(false);
+const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+const [showForwardModal, setShowForwardModal] = useState(false);
+const [contacts, setContacts] = useState<{phone: string, name: string}[]>([]);
+const [showClearChatModal, setShowClearChatModal] = useState(false);
+const [contactSearch, setContactSearch] = useState("");
   
   const messageRef = useRef<FlatList<Message>>(null);
   const activeChatPhone = useRef<string | null>(null);
@@ -109,6 +115,138 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const filteredContacts = contacts.filter(contact => 
+    contact.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
+    contact.phone.includes(contactSearch)
+  );
+
+  const toggleMessageSelection = (messageId: string) => {
+    setSelectedMessages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
+      }
+      
+      // Exit selection mode if no messages selected
+      if (newSet.size === 0) {
+        setSelectionMode(false);
+      }
+      
+      return newSet;
+    });
+  };
+  
+  const enterSelectionMode = (messageId: string) => {
+    setSelectionMode(true);
+    setSelectedMessages(new Set([messageId]));
+  };
+  
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedMessages(new Set());
+  };
+  
+  const selectAllMessages = () => {
+    const allMessageIds = new Set(messages.map(msg => msg.id));
+    setSelectedMessages(allMessageIds);
+  };
+
+  const deleteSelectedMessages = async () => {
+    try {
+      const messageIds = Array.from(selectedMessages);
+      
+      const { error } = await supabase
+        .from("messages")
+        .delete()
+        .in('id', messageIds);
+      
+      if (error) throw error;
+      
+      setMessages(prev => prev.filter(msg => !selectedMessages.has(msg.id)));
+      exitSelectionMode();
+      Alert.alert("Success", `${messageIds.length} message(s) deleted`);
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to delete messages");
+    }
+  };
+  
+  const clearAllChat = async () => {
+    try {
+      const { error } = await supabase
+        .from("messages")
+        .delete()
+        .or(`and(sender_phone.eq.${senderPhone},receiver_phone.eq.${receiverPhone}),and(sender_phone.eq.${receiverPhone},receiver_phone.eq.${senderPhone})`);
+      
+      if (error) throw error;
+      
+      setMessages([]);
+      setShowClearChatModal(false);
+      Alert.alert("Success", "Chat cleared successfully");
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to clear chat");
+    }
+  };
+
+  const forwardMessages = async (targetPhone: string) => {
+    try {
+      const messagesToForward = messages.filter(msg => selectedMessages.has(msg.id));
+      
+      for (const msg of messagesToForward) {
+        let messageContent = msg.message;
+        let mediaUrl = msg.media_url;
+        
+        // Handle encrypted messages
+        if (privacyMode && msg.ciphertext && msg.nonce) {
+          messageContent = msg.message; // Already decrypted in current view
+        }
+        
+        await supabase.from("messages").insert({
+          sender_phone: senderPhone,
+          receiver_phone: targetPhone,
+          message: messageContent,
+          media_url: mediaUrl,
+          media_type: msg.media_type,
+          file_name: msg.file_name,
+          file_size: msg.file_size,
+          mode: "compatibility", // Forward as compatibility mode
+          is_read: false,
+        });
+      }
+      
+      setShowForwardModal(false);
+      exitSelectionMode();
+      Alert.alert("Success", `${messagesToForward.length} message(s) forwarded`);
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to forward messages");
+    }
+  };
+
+  const loadContacts = async () => {
+    try {
+      console.log("Loading contacts for sender:", senderPhone);
+      
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("phone_number, name")  // Changed from display_name to name
+        .neq("phone_number", senderPhone);
+      
+      console.log("Supabase response:", { data, error });
+      
+      if (error) throw error;
+      
+      const contactList = (data || []).map(profile => ({
+        phone: profile.phone_number,
+        name: profile.name || profile.phone_number  // Use name column
+      }));
+      
+      console.log("Final contacts:", contactList);
+      setContacts(contactList);
+    } catch (err) {
+      console.error("Load contacts error:", err);
+    }
+  };
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -487,6 +625,13 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
     }, [markMessagesAsRead])
   );
 
+  // Add this useEffect to trigger loadContacts when forward modal opens
+useEffect(() => {
+  if (showForwardModal) {
+    console.log("Forward modal opened, loading contacts...");
+    loadContacts();
+  }
+}, [showForwardModal]);
   const handleAI = async (query: string): Promise<string> => {
     try {
       const resp = await axios.post("https://fabc3f159498.ngrok-free.app/ask-ai", {
@@ -828,42 +973,57 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
     }
 
     return (
-      <TouchableOpacity onLongPress={() => handleToggleReply(item.message)}>
-        <View
-          style={[
-            styles.messageWrapper,
-            isMyMsg ? styles.myWrapper : styles.theirWrapper,
-            isReplyMsg && styles.replyMsgContainer,
-          ]}
-        >
-          {isReplyMsg && (
-            <View style={styles.replyToContainer}>
-              <Text style={styles.replyToText} numberOfLines={1} ellipsizeMode="tail">
-                Replying to: {item.reply_to_message}
-              </Text>
-            </View>
-          )}
-
-          {renderMediaContent(item)}
-
-          {!!displayMessage && (
-            <Text
-              style={[
-                isMyMsg ? styles.myMsg : styles.theirMsg,
-                !privacyMode && item.mode === "privacy" && { fontStyle: "italic", color: "#888" },
-              ]}
-            >
-              {displayMessage}
+      <TouchableOpacity 
+      onLongPress={() => selectionMode ? null : enterSelectionMode(item.id)}
+      onPress={() => selectionMode ? toggleMessageSelection(item.id) : handleToggleReply(item.message)}
+      activeOpacity={selectionMode ? 0.7 : 1}
+    >
+      <View
+        style={[
+          styles.messageWrapper,
+          isMyMsg ? styles.myWrapper : styles.theirWrapper,
+          isReplyMsg && styles.replyMsgContainer,
+          selectedMessages.has(item.id) && styles.selectedMessage,
+        ]}
+      >
+        {/* Add selection indicator */}
+        {selectionMode && (
+          <View style={styles.selectionIndicator}>
+            <Text style={styles.selectionCheckmark}>
+              {selectedMessages.has(item.id) ? '✓' : '○'}
             </Text>
-          )}
-          <Text style={styles.timeText}>
-            {new Date(item.created_at).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+          </View>
+        )}
+        
+        {/* Rest of your existing message content */}
+        {isReplyMsg && (
+          <View style={styles.replyToContainer}>
+            <Text style={styles.replyToText} numberOfLines={1} ellipsizeMode="tail">
+              Replying to: {item.reply_to_message}
+            </Text>
+          </View>
+        )}
+    
+        {renderMediaContent(item)}
+    
+        {!!displayMessage && (
+          <Text
+            style={[
+              isMyMsg ? styles.myMsg : styles.theirMsg,
+              !privacyMode && item.mode === "privacy" && { fontStyle: "italic", color: "#888" },
+            ]}
+          >
+            {displayMessage}
           </Text>
-        </View>
-      </TouchableOpacity>
+        )}
+        <Text style={styles.timeText}>
+          {new Date(item.created_at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </Text>
+      </View>
+    </TouchableOpacity>
     );
   };
 
@@ -877,24 +1037,63 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         {/* Header */}
-        <View style={[styles.header, themeStyles.header]}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={[styles.backButtonText, themeStyles.headerText]}>&lt;</Text>
-          </TouchableOpacity>
-          <View style={styles.titleContainer}>
-            <Text style={[styles.title, themeStyles.title]}>
-              {contactName || receiverPhone}
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => setPrivacyMode(!privacyMode)}
-            style={[styles.privacyToggleBtn, { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' }]}
-          >
-            <Text style={styles.privacyToggleText}>
-              {privacyMode ? '🔒 Privacy' : '📱 Standard'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Header */}
+<View style={[styles.header, themeStyles.header]}>
+  {selectionMode ? (
+    // Selection Mode Header
+    <>
+      <TouchableOpacity style={styles.backButton} onPress={exitSelectionMode}>
+        <Text style={[styles.backButtonText, themeStyles.headerText]}>✕</Text>
+      </TouchableOpacity>
+      
+      <View style={styles.selectionInfo}>
+        <Text style={[styles.selectionCount, themeStyles.title]}>
+          {selectedMessages.size} selected
+        </Text>
+      </View>
+      
+      <View style={styles.selectionActions}>
+        <TouchableOpacity style={styles.actionButton} onPress={selectAllMessages}>
+          <Text style={styles.actionIcon}>☑️</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={styles.actionButton} onPress={() => {setContactSearch("");loadContacts();setShowForwardModal(true)}}>
+          <Text style={styles.actionIcon}>↗️</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={styles.actionButton} onPress={deleteSelectedMessages}>
+          <Text style={styles.actionIcon}>🗑️</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  ) : (
+    // Normal Mode Header
+    <>
+      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <Text style={[styles.backButtonText, themeStyles.headerText]}>&lt;</Text>
+      </TouchableOpacity>
+      
+      <View style={styles.titleContainer}>
+        <Text style={[styles.title, themeStyles.title]}>
+          {contactName || receiverPhone}
+        </Text>
+      </View>
+      
+      <TouchableOpacity style={styles.menuButton} onPress={() => setShowClearChatModal(true)}>
+        <Text style={[styles.menuIcon, themeStyles.headerText]}>⋮</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity
+        onPress={() => setPrivacyMode(!privacyMode)}
+        style={[styles.privacyToggleBtn, { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' }]}
+      >
+        <Text style={styles.privacyToggleText}>
+          {privacyMode ? '🔒 Privacy' : '📱 Standard'}
+        </Text>
+      </TouchableOpacity>
+    </>
+  )}
+</View>
 
         {/* Messages */}
         <FlatList
@@ -1006,6 +1205,94 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
             </View>
           </View>
         </Modal>
+        {/* Forward Modal */}
+<Modal visible={showForwardModal} transparent animationType="slide">
+  <View style={styles.modalContainer}>
+    <View style={styles.forwardModalContent}>
+      <View style={styles.forwardHeader}>
+        <Text style={styles.forwardTitle}>Forward to</Text>
+        <TouchableOpacity onPress={() => setShowForwardModal(false)}>
+          <Text style={styles.forwardClose}>✕</Text>
+        </TouchableOpacity>
+      </View>
+      
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search contacts..."
+          value={contactSearch}
+          onChangeText={setContactSearch}
+          autoCapitalize="none"
+        />
+        {contactSearch.length > 0 && (
+          <TouchableOpacity 
+            style={styles.clearSearch}
+            onPress={() => setContactSearch("")}
+          >
+            <Text style={styles.clearSearchText}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <FlatList
+        data={contacts}
+        keyExtractor={(item) => item.phone}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.contactItem}
+            onPress={() => forwardMessages(item.phone)}
+          >
+            <View style={styles.contactAvatar}>
+              <Text style={styles.contactInitial}>
+                {item.name.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={styles.contactInfo}>
+              <Text style={styles.contactName}>{item.name}</Text>
+              <Text style={styles.contactPhone}>{item.phone}</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        style={styles.contactList}
+        ListEmptyComponent={
+          <View style={styles.emptySearch}>
+            <Text style={styles.emptySearchText}>
+              {contactSearch ? "No contacts found" : "No contacts available"}
+            </Text>
+          </View>
+        }
+      />
+    </View>
+  </View>
+</Modal>
+
+{/* Clear Chat Confirmation Modal */}
+<Modal visible={showClearChatModal} transparent animationType="fade">
+  <View style={styles.modalContainer}>
+    <View style={styles.clearChatModal}>
+      <Text style={styles.clearChatTitle}>Clear Chat</Text>
+      <Text style={styles.clearChatMessage}>
+        This will delete all messages in this chat. This action cannot be undone.
+      </Text>
+      
+      <View style={styles.clearChatActions}>
+        <TouchableOpacity
+          style={[styles.clearChatButton, styles.cancelButton]}
+          onPress={() => setShowClearChatModal(false)}
+        >
+          <Text style={styles.cancelButtonText}>Cancel</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[styles.clearChatButton, styles.confirmButton]}
+          onPress={clearAllChat}
+        >
+          <Text style={styles.confirmButtonText}>Clear Chat</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1409,12 +1696,225 @@ const styles = StyleSheet.create({
     fontFamily: 'Kreon-Regular',
     minWidth: 30,
   },
+// Add these to your existing styles object:
 
+// Selection Mode Styles
+selectionInfo: {
+  flex: 1,
+  alignItems: 'center',
+},
+selectionCount: {
+  fontSize: 16,
+  fontFamily: 'Kreon-Bold',
+},
+selectionActions: {
+  flexDirection: 'row',
+  gap: 12,
+},
+actionButton: {
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: '#2196F3',
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+actionIcon: {
+  fontSize: 18,
+  color: 'white',
+},
+
+// Message Selection Styles
+selectedMessage: {
+  backgroundColor: '#E3F2FD',
+  borderWidth: 2,
+  borderColor: '#2196F3',
+},
+selectionIndicator: {
+  position: 'absolute',
+  top: 8,
+  right: 8,
+  width: 24,
+  height: 24,
+  borderRadius: 12,
+  backgroundColor: 'white',
+  alignItems: 'center',
+  justifyContent: 'center',
+  elevation: 3,
+},
+selectionCheckmark: {
+  fontSize: 14,
+  color: '#2196F3',
+  fontWeight: 'bold',
+},
+
+// Menu Button
+menuButton: {
+  width: 44,
+  height: 44,
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 22,
+},
+menuIcon: {
+  fontSize: 24,
+  fontWeight: 'bold',
+},
+
+// Forward Modal Styles
+forwardModalContent: {
+  backgroundColor: 'white',
+  
+  width:'100%',
+  marginHorizontal: 20,
+  borderRadius: 0,
+  maxHeight: '100%',
+  elevation: 5,
+},
+forwardHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: 16,
+  borderBottomWidth: 1,
+  borderBottomColor: '#E0E0E0',
+},
+forwardTitle: {
+  fontSize: 18,
+  fontFamily: 'Kreon-Bold',
+  color: '#333',
+},
+forwardClose: {
+  fontSize: 20,
+  color: '#666',
+},
+contactList: {
+  maxHeight: 400,
+},
+contactItem: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 16,
+  borderBottomWidth: 1,
+  borderBottomColor: '#F0F0F0',
+},
+contactAvatar: {
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: '#2196F3',
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginRight: 12,
+},
+contactInitial: {
+  color: 'white',
+  fontSize: 16,
+  fontFamily: 'Kreon-Bold',
+},
+contactInfo: {
+  flex: 1,
+},
+contactName: {
+  fontSize: 16,
+  fontFamily: 'Kreon-Bold',
+  color: '#333',
+},
+contactPhone: {
+  fontSize: 14,
+  fontFamily: 'Kreon-Regular',
+  color: '#666',
+},
+// Add these to your styles object:
+searchContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  margin: 16,
+  borderWidth: 1,
+  borderColor: '#E0E0E0',
+  borderRadius: 8,
+  backgroundColor: '#F9F9F9',
+},
+searchInput: {
+  flex: 1,
+  paddingHorizontal: 12,
+  paddingVertical: 10,
+  fontSize: 16,
+  fontFamily: 'Kreon-Regular',
+},
+clearSearch: {
+  padding: 10,
+},
+clearSearchText: {
+  fontSize: 16,
+  color: '#666',
+},
+emptySearch: {
+  padding: 20,
+  alignItems: 'center',
+},
+emptySearchText: {
+  fontSize: 16,
+  color: '#666',
+  fontFamily: 'Kreon-Regular',
+},
+// Clear Chat Modal Styles
+clearChatModal: {
+  backgroundColor: 'white',
+  margin: 20,
+  borderRadius: 12,
+  padding: 24,
+  elevation: 5,
+},
+clearChatTitle: {
+  fontSize: 20,
+  fontFamily: 'Kreon-Bold',
+  color: '#333',
+  marginBottom: 12,
+  textAlign: 'center',
+},
+clearChatMessage: {
+  fontSize: 16,
+  fontFamily: 'Kreon-Regular',
+  color: '#666',
+  textAlign: 'center',
+  marginBottom: 24,
+  lineHeight: 22,
+},
+clearChatActions: {
+  flexDirection: 'row',
+  justifyContent: 'space-around',
+},
+clearChatButton: {
+  flex: 1,
+  paddingVertical: 12,
+  borderRadius: 8,
+  marginHorizontal: 8,
+},
+cancelButton: {
+  backgroundColor: '#F5F5F5',
+},
+confirmButton: {
+  backgroundColor: '#F44336',
+},
+cancelButtonText: {
+  color: '#333',
+  fontSize: 16,
+  fontFamily: 'Kreon-Bold',
+  textAlign: 'center',
+},
+confirmButtonText: {
+  color: 'white',
+  fontSize: 16,
+  fontFamily: 'Kreon-Bold',
+  textAlign: 'center',
+},
   // Modal Styles
   modalContainer: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.9)',
     justifyContent: 'center',
+    height:'100%',
     alignItems: 'center',
   },
   modalContent: {
