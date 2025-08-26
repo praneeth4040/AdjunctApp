@@ -62,7 +62,9 @@
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5",
     "tweetnacl": "^1.0.3",
-    "tweetnacl-util": "^0.15.1"
+    "tweetnacl-util": "^0.15.1",
+    "@react-native-community/datetimepicker": "8.4.1",
+    "expo-notifications": "~0.31.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
