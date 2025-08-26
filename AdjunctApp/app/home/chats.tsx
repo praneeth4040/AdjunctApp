@@ -420,7 +420,7 @@ export default function ChatsScreen() {
         return styles.offlineDot;
     }
   };
-
+  console.log("username",userName)
   const handleOpenChat = (phone: string) => {
     markMessagesAsRead(phone);
     router.push(`/chats/${phone}`);
@@ -460,6 +460,7 @@ export default function ChatsScreen() {
           <View>
             <Text style={styles.greeting}>hi</Text>
             <Text style={styles.username}>{userName || "Loading..."}</Text>
+            
           </View>
           <View style={styles.headerIcons}>
             <Ionicons name="search" size={24} color="black" style={{ marginRight: 8 }} />

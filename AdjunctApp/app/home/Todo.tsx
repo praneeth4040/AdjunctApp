@@ -53,7 +53,7 @@ const Todo = () => {
       console.error('Error fetching user:', error.message);
       return;
     }
-  
+    console.log(data)
     const phone = data.user?.phone;
     if (phone) {
       setUserPhone(phone);
