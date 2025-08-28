@@ -347,19 +347,22 @@ const AIMessagingApp: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFF' },
+  container: { flex: 1, backgroundColor: '#E9E9E9',borderRadius:25 },
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: '#F9FAFB',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    marginTop: 40,
+   
+    marginTop: 25,
   },
   tab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    
+    
     paddingVertical: 12,
   },
   activeTab: {

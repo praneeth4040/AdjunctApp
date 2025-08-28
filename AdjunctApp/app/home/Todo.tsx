@@ -293,7 +293,7 @@ const deleteTask = async (id: string) => {
 export default Todo;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#f9f9f9" },
+  container: { flex: 1, padding: 20, backgroundColor: "#E9E9E9" },
   heading: { fontSize: 24, fontWeight: "bold", marginBottom: 20, textAlign: "center" },
   inputRow: { flexDirection: "row", marginBottom: 15 },
   input: {

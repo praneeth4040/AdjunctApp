@@ -82,7 +82,23 @@ export default function ChatsScreen() {
 
     setContactsMap(phoneMap);
   };
+  const getUserProfile = async (senderPhone: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("name") // only fetch name column
+        .eq("phone_number", senderPhone)
+        .single();
 
+      if (error) {
+        console.error("Error fetching profile:", error.message);
+      } else if (data) {
+        setUserName(data.name); // 👈 update state with DB value
+      }
+    } catch (err) {
+      console.error("Unexpected error:", err);
+    }
+  };
   // Create user status record on first login with default mode
   const initializeUserStatus = async (phone: string) => {
     try {
@@ -349,6 +365,12 @@ export default function ChatsScreen() {
       if (phoneNumber) fetchConversations(phoneNumber);
     }, [phoneNumber])
   );
+  useEffect(()=>{
+    if (phoneNumber) {
+      getUserProfile(phoneNumber);
+    }
+  },[phoneNumber]);
+  console.log(userName)
 
   useEffect(() => {
     fetchUserAndContacts();
