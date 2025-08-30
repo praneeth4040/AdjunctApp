@@ -19,8 +19,8 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as AuthSession from 'expo-auth-session';
 
-const CLIENT_ID = '848784416430-8861cecc0rk7t5on72hgakrpgvv2jkqg.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
+// const CLIENT_ID = '848784416430-8861cecc0rk7t5on72hgakrpgvv2jkqg.apps.googleusercontent.com';
+// const CLIENT_SECRET = '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';
 // const REDIRECT_URI = AuthSession.makeRedirectUri({
 //   // Use your custom scheme if needed
 //   useProxy: true,
