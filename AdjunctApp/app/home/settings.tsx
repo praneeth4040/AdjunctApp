@@ -15,8 +15,26 @@ import { Ionicons, AntDesign } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { router, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as AuthSession from 'expo-auth-session';
+
+const CLIENT_ID = '848784416430-8861cecc0rk7t5on72hgakrpgvv2jkqg.apps.googleusercontent.com';
+const CLIENT_SECRET = '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';
+// const REDIRECT_URI = AuthSession.makeRedirectUri({
+//   // Use your custom scheme if needed
+//   useProxy: true,
+// });
+const REDIRECT_URI='https://auth.expo.io/@dhaneshvaibhav/AdjunctApp'
+const SCOPES = ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.modify'];
+
+
+
+const discovery = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
+};
 
 function Settings() {
   const [userName, setUserName] = useState('');
@@ -25,6 +43,22 @@ function Settings() {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
+  const router = useRouter();
+
+  // AuthSession useAuthRequest hook
+  const [request, response, promptAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      scopes: SCOPES,
+      responseType: 'code',
+      extraParams: {
+        access_type: 'offline', // important to get refresh token
+        prompt: 'consent', // force showing consent screen
+      },
+    },
+    discovery
+  );
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -55,24 +89,92 @@ function Settings() {
     fetchUser();
   }, []);
 
+  useEffect(() => {
+    console.log('Auth request:', request);
+  }, [request]);
+  // ---- INSIDE useEffect for OAuth response ----
+useEffect(() => {
+  console.log('OAuth response:', response);
+  if (response?.type === 'success' && response.params.code) {
+    console.log('✅ Received code:', response.params.code);
+    exchangeCodeForTokens(response.params.code);
+  } else if (response) {
+    console.log('OAuth did not return code:', response);
+    Alert.alert('OAuth issue', `Type: ${response.type}`);
+  }
+}, [response]);
+
+
+  // Exchange authorization code for tokens
+  // ---- Token exchange logic ----
+const exchangeCodeForTokens = async (code: string) => {
+  setLoading(true);
+  try {
+    console.log('🔄 Exchanging code for tokens...');
+    const tokenResponse = await fetch(discovery.tokenEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        code,
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        redirect_uri: REDIRECT_URI,
+        grant_type: 'authorization_code',
+      }).toString(),
+    });
+
+    const tokenResult = await tokenResponse.json();
+    console.log('🧾 Token exchange result:', tokenResult);
+
+    if (tokenResult.error) {
+      throw new Error(tokenResult.error_description || 'Failed to get tokens');
+    }
+
+    const { access_token, refresh_token } = tokenResult;
+    console.log('✅ Access Token:', access_token);
+    console.log('✅ Refresh Token:', refresh_token);
+
+    // Save tokens to Supabase based on phone number
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        google_access_token: access_token,
+        google_refresh_token: refresh_token,
+      })
+      .eq('phone_number', phoneNumber);
+
+    if (error) throw error;
+
+    console.log('✅ Tokens successfully saved to Supabase for phone:', phoneNumber);
+    Alert.alert('Success', 'Google tokens saved successfully!');
+  } catch (error) {
+    console.error('❌ Token exchange error:', error);
+    Alert.alert('Error', 'Failed to save Google tokens');
+  } finally {
+    setLoading(false);
+  }
+};
+
   const uploadImageToSupabase = async (uri: string): Promise<string | null> => {
     try {
       const fileExt = uri.split('.').pop();
       const fileName = `${userId}_${Date.now()}.${fileExt}`;
       const filePath = `${fileName}`;
-  
+
       // Read file as base64
       const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-  
+
       // Convert base64 -> ArrayBuffer
       const binary = atob(base64);
       const arrayBuffer = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) {
         arrayBuffer[i] = binary.charCodeAt(i);
       }
-  
+
       // Upload to Supabase
       const { error: uploadError } = await supabase.storage
         .from('avatars')
@@ -80,20 +182,20 @@ function Settings() {
           contentType: `image/${fileExt}`,
           upsert: true,
         });
-  
+
       if (uploadError) throw uploadError;
-  
+
       const { data: publicURLData } = supabase.storage
         .from('avatars')
         .getPublicUrl(filePath);
-  
+
       return publicURLData.publicUrl;
     } catch (err) {
       console.error('Image upload error:', err);
       return null;
     }
   };
-  
+
   const handleSave = async () => {
     if (!userId) return;
     setLoading(true);
@@ -111,7 +213,7 @@ function Settings() {
 
       if (error) throw error;
       Alert.alert('✅ Success', 'Profile updated!');
-      router.push('/home/chats')
+      router.push('/home/chats');
       setEditing(false);
     } catch (err) {
       Alert.alert('❌ Error', 'Failed to update profile');
@@ -133,24 +235,22 @@ function Settings() {
   };
 
   const handleLogout = async () => {
-    const router = useRouter();
-  
     try {
-      // 1️⃣ Sign out from Supabase
       await supabase.auth.signOut();
-  
-      // 2️⃣ Clear any local storage or state
-      await AsyncStorage.clear(); // optional if you store session or user info
-      // setUser(null); // if using state for user
-  
-      // 3️⃣ Navigate to onboard page
-      
-  
-      Alert.alert('Logged out', 'loggedout.');
+      await AsyncStorage.clear();
+      Alert.alert('Logged out', 'You have been logged out.');
       router.push('/onboard');
     } catch (err) {
       Alert.alert('❌ Error', 'Logout failed');
       console.error(err);
+    }
+  };
+
+  const handleGoogleOAuth = () => {
+    if (request) {
+      promptAsync();
+    } else {
+      Alert.alert('Error', 'Google OAuth request not ready');
     }
   };
 
@@ -199,9 +299,8 @@ function Settings() {
 
           <TouchableOpacity
             style={styles.googleButton}
-            onPress={() =>
-              Alert.alert('Coming soon', 'Google authentication will be available soon!')
-            }
+            onPress={handleGoogleOAuth}
+            disabled={!request || loading}
           >
             <AntDesign
               name="google"
@@ -209,7 +308,11 @@ function Settings() {
               color="#EA4335"
               style={{ marginRight: 8 }}
             />
-            <Text style={styles.googleButtonText}>Connect with Google</Text>
+            {loading ? (
+              <ActivityIndicator color="#EA4335" />
+            ) : (
+              <Text style={styles.googleButtonText}>Connect with Google</Text>
+            )}
           </TouchableOpacity>
 
           <View style={styles.buttonRow}>
