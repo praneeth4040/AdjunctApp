@@ -9,120 +9,26 @@ import {
   Platform,
   ScrollView,
   Alert,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CountryPicker } from 'react-native-country-codes-picker';
 import { useRouter } from 'expo-router';
 import { supabase } from '../lib/supabase'; // ✅ Make sure you have this file
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#DCD0A8',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#DCD0A8',
-  },
-  scroll: {
-    flexGrow: 1,
-    justifyContent: 'space-between',
-    paddingHorizontal: 30,
-    paddingTop: 60,
-  },
-  title: {
-    fontSize: 24,
-    fontFamily: 'Kreon-Bold',
-    textAlign: 'center',
-    marginBottom: 10,
-    color: '#000',
-  },
-  stepContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginBottom: 30,
-    gap: 10,
-  },
-  stepLine: {
-    height: 2,
-    width: 40,
-    borderRadius: 2,
-  },
-  active: {
-    backgroundColor: '#000',
-  },
-  dimmed: {
-    backgroundColor: '#aaa',
-  },
-  heading: {
-    fontSize: 32,
-    fontFamily:'Kreon-Bold',
-    textAlign: 'left',
-    color: '#000',
-  },
-  subText: {
-    fontSize: 16,
-    color: '#6f634f',
-    fontFamily:'Kreon-Regular',
-    marginBottom: 40,
-  },
-  phoneContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-  },
-  countryCode: {
-    fontSize: 22,
-    fontFamily:'Kreon-SemiBold',
-    color: '#000',
-    marginRight: 10,
-  },
-  phoneInput: {
-    flex: 1,
-    fontSize: 22,
-    color: '#5c5340',
-    fontFamily:'Kreon-Regular',
-    letterSpacing: 1,
-  },
-  underline: {
-    height: 1,
-    backgroundColor: '#000',
-    marginBottom: 30,
-  },
-  bottom: {
-    marginTop: 40,
-    alignItems: 'center',
-    paddingBottom: 20,
-  },
-  terms: {
-    textAlign: 'center',
-    color: '#6f634f',
-    fontFamily:'Kreon-Regular',
-    marginBottom: 20,
-  },
-  link: {
-    color: '#000',
-    fontFamily:'Kreon-SemiBold'
-  },
-  button: {
-    backgroundColor: '#b2ffe2',
-    paddingVertical: 14,
-    paddingHorizontal: 30,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 1, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 5,
-    width: '100%',
-  },
-  buttonText: {
-    textAlign: 'center',
-    fontSize: 24,
-    fontFamily:'Kreon-Bold',  
-    color: '#000',
-  },
-});
+// Get screen dimensions
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// Responsive helper functions
+const wp = (percentage: number): number => (screenWidth * percentage) / 100;
+const hp = (percentage: number): number => (screenHeight * percentage) / 100;
+
+// Font scaling based on screen width
+const getFontSize = (size: number): number => {
+  const scale = screenWidth / 375; // Base width (iPhone X/11/12/13 width)
+  const newSize = size * scale;
+  return Math.max(12, Math.min(newSize, size * 1.2)); // Min 12, max 20% larger than original
+};
 
 const Login = () => {
   const [showPicker, setShowPicker] = useState(false);
@@ -213,5 +119,124 @@ const Login = () => {
     </SafeAreaView>
   );
 };
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#DCD0A8',
+  },
+  container: {
+    flex: 1,
+    backgroundColor: '#DCD0A8',
+  },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: wp(8), // 8% of screen width instead of fixed 30
+    paddingTop: hp(7), // 7% of screen height instead of fixed 60
+  },
+  title: {
+    fontSize: getFontSize(24),
+    fontFamily: 'Kreon-Bold',
+    textAlign: 'center',
+    marginBottom: hp(1.2), // 1.2% of screen height instead of fixed 10
+    color: '#000',
+  },
+  stepContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: hp(3.5), // 3.5% of screen height instead of fixed 30
+    gap: wp(2.5), // 2.5% of screen width instead of fixed 10
+  },
+  stepLine: {
+    height: 2,
+    width: wp(10), // 10% of screen width instead of fixed 40
+    borderRadius: 2,
+  },
+  active: {
+    backgroundColor: '#000',
+  },
+  dimmed: {
+    backgroundColor: '#aaa',
+  },
+  heading: {
+    fontSize: getFontSize(32),
+    fontFamily: 'Kreon-Bold',
+    textAlign: 'left',
+    color: '#000',
+  },
+  subText: {
+    fontSize: getFontSize(16),
+    color: '#6f634f',
+    fontFamily: 'Kreon-Regular',
+    marginBottom: hp(5), // 5% of screen height instead of fixed 40
+  },
+  phoneContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: hp(0.6), // 0.6% of screen height instead of fixed 5
+    paddingVertical: hp(1), // Add vertical padding for better touch area
+  },
+  countryCode: {
+    fontSize: getFontSize(22),
+    fontFamily: 'Kreon-SemiBold',
+    color: '#000',
+    marginRight: wp(2.5), // 2.5% of screen width instead of fixed 10
+    minWidth: wp(12), // Ensure consistent width for country code
+    paddingVertical: hp(1), // Better touch area
+    paddingHorizontal: wp(2), // Better touch area
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: getFontSize(22),
+    color: '#5c5340',
+    fontFamily: 'Kreon-Regular',
+    letterSpacing: wp(0.3), // 0.3% of screen width instead of fixed 1
+    paddingVertical: hp(1), // Better touch area
+    minHeight: hp(6), // Ensure minimum touch area
+  },
+  underline: {
+    height: 1,
+    backgroundColor: '#000',
+    marginBottom: hp(3.5), // 3.5% of screen height instead of fixed 30
+  },
+  bottom: {
+    marginTop: hp(5), // 5% of screen height instead of fixed 40
+    alignItems: 'center',
+    paddingBottom: hp(2.5), // 2.5% of screen height instead of fixed 20
+  },
+  terms: {
+    textAlign: 'center',
+    color: '#6f634f',
+    fontFamily: 'Kreon-Regular',
+    fontSize: getFontSize(14), // Added responsive font size
+    marginBottom: hp(2.5), // 2.5% of screen height instead of fixed 20
+    lineHeight: getFontSize(18), // Added responsive line height
+    paddingHorizontal: wp(2), // Add horizontal padding for better readability
+  },
+  link: {
+    color: '#000',
+    fontFamily: 'Kreon-SemiBold'
+  },
+  button: {
+    backgroundColor: '#b2ffe2',
+    paddingVertical: hp(1.8), // 1.8% of screen height instead of fixed 14
+    paddingHorizontal: wp(8), // 8% of screen width instead of fixed 30
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 5,
+    width: '100%',
+    minHeight: hp(6), // Ensure minimum touch area
+  },
+  buttonText: {
+    textAlign: 'center',
+    fontSize: getFontSize(24),
+    fontFamily: 'Kreon-Bold',  
+    color: '#000',
+  },
+});
 
 export default Login;

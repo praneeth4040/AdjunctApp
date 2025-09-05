@@ -61,6 +61,8 @@ export default function ChatsScreen() {
   const [isUnlocked, setIsUnlocked] = useState(false);
   
   // NEW STATE FOR LOCKING FUNCTIONALITY
+  const [unlockSelectionMode, setUnlockSelectionMode] = useState(false);
+const [selectedUnlockChats, setSelectedUnlockChats] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChats, setSelectedChats] = useState<string[]>([]);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -69,7 +71,8 @@ export default function ChatsScreen() {
   const [isSettingPassword, setIsSettingPassword] = useState(false);
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [unlockPasswordInput, setUnlockPasswordInput] = useState("");
-  
+  const [isInitialized, setIsInitialized] = useState(false);
+const [contactsLoaded, setContactsLoaded] = useState(false);
   // Swipe gesture for unlock
   const translateY = useRef(new Animated.Value(0)).current;
   
@@ -87,22 +90,47 @@ export default function ChatsScreen() {
   };
 
   const loadContacts = async () => {
-    const { status } = await Contacts.requestPermissionsAsync();
-    if (status !== "granted") return;
-
-    const { data } = await Contacts.getContactsAsync({
-      fields: [Contacts.Fields.PhoneNumbers],
-    });
-
-    const phoneMap: Record<string, string> = {};
-    data.forEach((contact) => {
-      contact.phoneNumbers?.forEach((num) => {
-        const clean = normalizePhone(num.number);
-        if (clean) phoneMap[clean] = contact.name || "";
+    if (contactsLoaded) return contactsMap; // Don't reload if already loaded
+    
+    try {
+      // Try loading from AsyncStorage first
+      const storedContacts = await AsyncStorage.getItem('contactsMap');
+      if (storedContacts) {
+        const parsedContacts = JSON.parse(storedContacts);
+        setContactsMap(parsedContacts);
+        setContactsLoaded(true);
+        return parsedContacts;
+      }
+  
+      // Only fetch from device if not in storage
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        setContactsLoaded(true);
+        return {};
+      }
+  
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
       });
-    });
-
-    setContactsMap(phoneMap);
+  
+      const phoneMap: Record<string, string> = {};
+      data.forEach((contact) => {
+        contact.phoneNumbers?.forEach((num) => {
+          const clean = normalizePhone(num.number);
+          if (clean) phoneMap[clean] = contact.name || "";
+        });
+      });
+  
+      // Save to AsyncStorage
+      await AsyncStorage.setItem('contactsMap', JSON.stringify(phoneMap));
+      setContactsMap(phoneMap);
+      setContactsLoaded(true);
+      return phoneMap;
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+      setContactsLoaded(true);
+      return {};
+    }
   };
   
   const getUserProfile = async (senderPhone: string) => {
@@ -205,8 +233,10 @@ export default function ChatsScreen() {
   };
 
   const fetchUserAndContacts = useCallback(async () => {
-    await loadContacts();
-
+    if (isInitialized) return; // Prevent re-initialization
+    
+    const contacts = await loadContacts();
+  
     const storedPhone = await getPhoneFromStorage();
     
     if (storedPhone) {
@@ -216,18 +246,19 @@ export default function ChatsScreen() {
       await fetchConversations(storedPhone);
       subscribeToMessages(storedPhone);
       await fetchLockedChats(storedPhone);
+      setIsInitialized(true);
     } else {
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
-
+  
       const { data } = await supabase
         .from("profiles")
         .select("name, phone_number")
         .eq("user_id", user.id)
         .single();
-
+  
       const phone = normalizePhone(data?.phone_number);
       setUserName(data?.name || "User");
       
@@ -239,9 +270,54 @@ export default function ChatsScreen() {
         await fetchConversations(phone);
         subscribeToMessages(phone);
         await fetchLockedChats(phone);
+        setIsInitialized(true);
       }
     }
-  }, []);
+  }, [isInitialized]);
+
+  // UNLOCK SELECTION FUNCTIONS
+const toggleUnlockSelectionMode = () => {
+  setUnlockSelectionMode(!unlockSelectionMode);
+  setSelectedUnlockChats([]);
+};
+
+const exitUnlockSelectionMode = () => {
+  setUnlockSelectionMode(false);
+  setSelectedUnlockChats([]);
+};
+
+const toggleUnlockChatSelection = (phoneNumber: string) => {
+  const normalizedPhone = normalizePhone(phoneNumber);
+  setSelectedUnlockChats(prev => 
+    prev.includes(normalizedPhone) 
+      ? prev.filter(p => p !== normalizedPhone)
+      : [...prev, normalizedPhone]
+  );
+};
+
+// HANDLE UNLOCK SELECTED CHATS
+const handleUnlockSelectedChats = async () => {
+  if (selectedUnlockChats.length === 0) {
+    Alert.alert("No Selection", "Please select chats to unlock");
+    return;
+  }
+
+  try {
+    for (const chatPhone of selectedUnlockChats) {
+      await unlockChat(phoneNumber, chatPhone);
+    }
+    
+    // Update UI
+    setLockedChats(prev => prev.filter(phone => !selectedUnlockChats.includes(phone)));
+    setSelectedUnlockChats([]);
+    setUnlockSelectionMode(false);
+    
+    Alert.alert("Chats Unlocked", `${selectedUnlockChats.length} chat(s) have been unlocked`);
+  } catch (error) {
+    console.error("Error unlocking chats:", error);
+    Alert.alert("Error", "Failed to unlock chats");
+  }
+};
 
   const fetchConversations = async (currentUserPhone: string) => {
     const { data: messages } = await supabase
@@ -613,8 +689,11 @@ export default function ChatsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (phoneNumber) fetchConversations(phoneNumber);
-    }, [phoneNumber])
+      if (phoneNumber && contactsLoaded && isInitialized) {
+        // Only refresh conversations, not contacts or other data
+        fetchConversations(phoneNumber);
+      }
+    }, [phoneNumber, contactsLoaded, isInitialized])
   );
 
   useEffect(() => {
@@ -687,10 +766,14 @@ export default function ChatsScreen() {
       return;
     }
     
+    if (unlockSelectionMode) {
+      toggleUnlockChatSelection(phone);
+      return;
+    }
+    
     markMessagesAsRead(phone);
     router.push(`/chats/${phone}`);
   };
-
   // Handle Android back button in selection mode
   const handleBackPress = () => {
     if (selectionMode) {
@@ -707,7 +790,7 @@ export default function ChatsScreen() {
       <TouchableOpacity 
         style={[
           styles.chatItem,
-          selectionMode && isSelected && styles.selectedChatItem
+          (selectionMode && isSelected) && styles.selectedChatItem
         ]} 
         onPress={() => handleOpenChat(item.phoneNumber)}
         onLongPress={() => {
