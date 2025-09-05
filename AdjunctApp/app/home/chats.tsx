@@ -59,10 +59,13 @@ export default function ChatsScreen() {
   const [userStatus, setUserStatus] = useState<"active" | "semiactive" | "offline">("offline");
   const [lockedChats, setLockedChats] = useState<string[]>([]);
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isSearchActive, setIsSearchActive] = useState(false);
   
-  // NEW STATE FOR LOCKING FUNCTIONALITY
+  // UNLOCK SELECTION MODE STATE
   const [unlockSelectionMode, setUnlockSelectionMode] = useState(false);
-const [selectedUnlockChats, setSelectedUnlockChats] = useState<string[]>([]);
+  const [selectedUnlockChats, setSelectedUnlockChats] = useState<string[]>([]);
+  
+  // LOCK SELECTION MODE STATE
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChats, setSelectedChats] = useState<string[]>([]);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -72,7 +75,8 @@ const [selectedUnlockChats, setSelectedUnlockChats] = useState<string[]>([]);
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [unlockPasswordInput, setUnlockPasswordInput] = useState("");
   const [isInitialized, setIsInitialized] = useState(false);
-const [contactsLoaded, setContactsLoaded] = useState(false);
+  const [contactsLoaded, setContactsLoaded] = useState(false);
+  
   // Swipe gesture for unlock
   const translateY = useRef(new Animated.Value(0)).current;
   
@@ -276,48 +280,48 @@ const [contactsLoaded, setContactsLoaded] = useState(false);
   }, [isInitialized]);
 
   // UNLOCK SELECTION FUNCTIONS
-const toggleUnlockSelectionMode = () => {
-  setUnlockSelectionMode(!unlockSelectionMode);
-  setSelectedUnlockChats([]);
-};
-
-const exitUnlockSelectionMode = () => {
-  setUnlockSelectionMode(false);
-  setSelectedUnlockChats([]);
-};
-
-const toggleUnlockChatSelection = (phoneNumber: string) => {
-  const normalizedPhone = normalizePhone(phoneNumber);
-  setSelectedUnlockChats(prev => 
-    prev.includes(normalizedPhone) 
-      ? prev.filter(p => p !== normalizedPhone)
-      : [...prev, normalizedPhone]
-  );
-};
-
-// HANDLE UNLOCK SELECTED CHATS
-const handleUnlockSelectedChats = async () => {
-  if (selectedUnlockChats.length === 0) {
-    Alert.alert("No Selection", "Please select chats to unlock");
-    return;
-  }
-
-  try {
-    for (const chatPhone of selectedUnlockChats) {
-      await unlockChat(phoneNumber, chatPhone);
-    }
-    
-    // Update UI
-    setLockedChats(prev => prev.filter(phone => !selectedUnlockChats.includes(phone)));
+  const toggleUnlockSelectionMode = () => {
+    setUnlockSelectionMode(!unlockSelectionMode);
     setSelectedUnlockChats([]);
+  };
+
+  const exitUnlockSelectionMode = () => {
     setUnlockSelectionMode(false);
-    
-    Alert.alert("Chats Unlocked", `${selectedUnlockChats.length} chat(s) have been unlocked`);
-  } catch (error) {
-    console.error("Error unlocking chats:", error);
-    Alert.alert("Error", "Failed to unlock chats");
-  }
-};
+    setSelectedUnlockChats([]);
+  };
+
+  const toggleUnlockChatSelection = (phoneNumber: string) => {
+    const normalizedPhone = normalizePhone(phoneNumber);
+    setSelectedUnlockChats(prev => 
+      prev.includes(normalizedPhone) 
+        ? prev.filter(p => p !== normalizedPhone)
+        : [...prev, normalizedPhone]
+    );
+  };
+
+  // HANDLE UNLOCK SELECTED CHATS
+  const handleUnlockSelectedChats = async () => {
+    if (selectedUnlockChats.length === 0) {
+      Alert.alert("No Selection", "Please select chats to unlock");
+      return;
+    }
+
+    try {
+      for (const chatPhone of selectedUnlockChats) {
+        await unlockChat(phoneNumber, chatPhone);
+      }
+      
+      // Update UI
+      setLockedChats(prev => prev.filter(phone => !selectedUnlockChats.includes(phone)));
+      setSelectedUnlockChats([]);
+      setUnlockSelectionMode(false);
+      
+      Alert.alert("Chats Unlocked", `${selectedUnlockChats.length} chat(s) have been unlocked`);
+    } catch (error) {
+      console.error("Error unlocking chats:", error);
+      Alert.alert("Error", "Failed to unlock chats");
+    }
+  };
 
   const fetchConversations = async (currentUserPhone: string) => {
     const { data: messages } = await supabase
@@ -452,7 +456,7 @@ const handleUnlockSelectedChats = async () => {
     return true;
   };
 
-  // NEW SELECTION MODE FUNCTIONS
+  // SELECTION MODE FUNCTIONS
   const toggleSelectionMode = () => {
     setSelectionMode(!selectionMode);
     setSelectedChats([]);
@@ -774,35 +778,41 @@ const handleUnlockSelectedChats = async () => {
     markMessagesAsRead(phone);
     router.push(`/chats/${phone}`);
   };
+
   // Handle Android back button in selection mode
   const handleBackPress = () => {
     if (selectionMode) {
       exitSelectionMode();
       return true; // Prevent default back action
     }
+    if (unlockSelectionMode) {
+      exitUnlockSelectionMode();
+      return true;
+    }
     return false; // Allow default back action
   };
 
   const renderChatItem = ({ item }: { item: Conversation }) => {
     const isSelected = selectedChats.includes(normalizePhone(item.phoneNumber));
+    const isUnlockSelected = selectedUnlockChats.includes(normalizePhone(item.phoneNumber));
     
     return (
       <TouchableOpacity 
         style={[
           styles.chatItem,
-          (selectionMode && isSelected) && styles.selectedChatItem
+          ((selectionMode && isSelected) || (unlockSelectionMode && isUnlockSelected)) && styles.selectedChatItem
         ]} 
         onPress={() => handleOpenChat(item.phoneNumber)}
         onLongPress={() => {
-          if (!selectionMode) {
+          if (!selectionMode && !unlockSelectionMode) {
             setSelectionMode(true);
             toggleChatSelection(item.phoneNumber);
           }
         }}
       >
-        {selectionMode && (
+        {(selectionMode || unlockSelectionMode) && (
           <View style={styles.selectionCircle}>
-            {isSelected && <View style={styles.selectionFill} />}
+            {(isSelected || isUnlockSelected) && <View style={styles.selectionFill} />}
           </View>
         )}
         
@@ -844,6 +854,13 @@ const handleUnlockSelectedChats = async () => {
     }
   };
 
+  // GET LOCKED CONVERSATIONS FOR UNLOCK MODE
+  const getLockedConversations = () => {
+    return conversations.filter(
+      c => lockedChats.includes(normalizePhone(c.phoneNumber))
+    );
+  };
+
   return (
     <View style={styles.outerContainer}>
       <SafeAreaView style={styles.container} edges={["top"]}>
@@ -872,14 +889,40 @@ const handleUnlockSelectedChats = async () => {
                 <Text style={styles.lockButtonText}>Lock</Text>
               </TouchableOpacity>
             </View>
+          ) : unlockSelectionMode ? (
+            <View style={styles.selectionHeader}>
+              <TouchableOpacity onPress={exitUnlockSelectionMode} style={styles.exitButton}>
+                <Ionicons name="close" size={24} color="black" />
+                <Text style={styles.exitText}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionCount}>
+                {selectedUnlockChats.length} selected
+              </Text>
+              <TouchableOpacity
+                onPress={handleUnlockSelectedChats}
+                disabled={selectedUnlockChats.length === 0}
+                style={[
+                  styles.unlockButton,
+                  selectedUnlockChats.length === 0 && styles.unlockButtonDisabled
+                ]}
+              >
+                <Ionicons name="lock-open" size={20} color="#fff" />
+                <Text style={styles.unlockButtonText}>Unlock</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <>
               <View>
-                <Text style={styles.greeting}>hi</Text>
+                <Text style={styles.greeting}>Good morning</Text>
                 <Text style={styles.username}>{userName || "Loading..."}</Text>
               </View>
               <View style={styles.headerIcons}>
-                <Ionicons name="search" size={24} color="black" style={{ marginRight: 8 }} />
+                <TouchableOpacity
+                  style={styles.searchButton}
+                  onPress={() => setIsSearchActive(!isSearchActive)}
+                >
+                  <Ionicons name="search" size={24} color="black" />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={toggleUserStatus} style={styles.statusTouchable}>
                   <View style={[styles.statusDot, getStatusDotStyle(userStatus)]} />
                 </TouchableOpacity>
@@ -901,24 +944,32 @@ const handleUnlockSelectedChats = async () => {
         >
           <Animated.View style={styles.chatsSection}>
             {/* UNLOCK INDICATOR */}
-            {lockedChats.length > 0 && !isUnlocked && (
+            {lockedChats.length > 0 && !isUnlocked && !unlockSelectionMode && (
               <View style={styles.unlockIndicator}>
                 <Ionicons name="chevron-down" size={16} color="#666" />
                 <Text style={styles.unlockText}>
                   Swipe down to unlock {lockedChats.length} hidden chat(s)
                 </Text>
+                <TouchableOpacity
+                  style={styles.unlockSelectButton}
+                  onPress={toggleUnlockSelectionMode}
+                >
+                  <Text style={styles.unlockSelectButtonText}>Select to unlock</Text>
+                </TouchableOpacity>
               </View>
             )}
             
             <FlatList
-              data={getVisibleConversations()}
+              data={unlockSelectionMode ? getLockedConversations() : getVisibleConversations()}
               renderItem={renderChatItem}
               keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={{ padding: 16, paddingTop: 24 }}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <Text style={styles.emptyText}>
-                  {lockedChats.length > 0 && !isUnlocked 
+                  {unlockSelectionMode 
+                    ? "No locked chats available"
+                    : lockedChats.length > 0 && !isUnlocked 
                     ? "All chats are locked. Swipe down to unlock."
                     : "No conversations yet — start a chat!"
                   }
@@ -1053,6 +1104,10 @@ const styles = StyleSheet.create({
   greeting: { fontSize: 14, fontFamily: "Kreon-Regular", color: "#000" },
   username: { fontSize: 28, fontFamily: "Kreon-Bold", color: "#000" },
   headerIcons: { flexDirection: "row", alignItems: "center" },
+  searchButton: {
+    marginRight: 16,
+    padding: 4,
+  },
   profileCircle: {
     width: 36,
     height: 36,
@@ -1121,6 +1176,23 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     fontFamily: "Kreon-Bold",
   },
+  unlockButton: {
+    backgroundColor: "#34C759",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  unlockButtonDisabled: {
+    backgroundColor: "#C4C4C4",
+  },
+  unlockButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    marginLeft: 4,
+    fontFamily: "Kreon-Bold",
+  },
   
   chatsSection: {
     flex: 1,
@@ -1134,8 +1206,9 @@ const styles = StyleSheet.create({
   unlockIndicator: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
     paddingVertical: 12,
+    paddingHorizontal: 16,
     backgroundColor: "#F0F0F0",
     borderBottomWidth: 1,
     borderBottomColor: "#E0E0E0",
@@ -1145,6 +1218,18 @@ const styles = StyleSheet.create({
     color: "#666",
     marginLeft: 4,
     fontFamily: "Kreon-Regular",
+    flex: 1,
+  },
+  unlockSelectButton: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  unlockSelectButtonText: {
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "Kreon-Bold",
   },
   
   chatItem: {
