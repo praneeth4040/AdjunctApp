@@ -1,26 +1,22 @@
-# tools/dispatcher.py
-from email import message
 from tools.emails import send_email_with_attachments
-from tools.get_chat_with_profiles import get_chat_with_profiles_tool , send_message_to_user
-# import other tools here as you create them
+from tools.get_chat_with_profiles import get_chat_with_profiles_tool
+from tools.ai_auto_responer import set_or_update_user_mode  # correct import
+from tools.getandupdate import check_and_update_todos
+
 
 def dispatch_tool_call(tool_name: str, args: dict, sender_phone: str = None, receiver_phone: str = None):
     """
     Routes tool calls to the correct function, adapting arguments if needed.
-
-    Args:
-        tool_name (str): Name of the tool.
-        args (dict): Arguments for the tool function.
-        sender_phone (str): Phone number of the user who initiated the request (optional).
-        receiver_phone (str): Phone number of the user with whom sender_phone is speaking (optional).
     """
     try:
-        # Match tool name and call appropriate function
         if tool_name == "get_chat_with_profiles":
-            return get_chat_with_profiles_tool(sender_phone,receiver_phone,args.get("limit",10))
+            return get_chat_with_profiles_tool({
+                **args,
+                "sender_phone": sender_phone,
+                "receiver_phone": receiver_phone
+            })
 
         elif tool_name == "send_email_with_attachments":
-            # Directly map dict keys to function params
             return send_email_with_attachments(
                 to=args.get("to"),
                 cc=args.get("cc"),
@@ -29,16 +25,24 @@ def dispatch_tool_call(tool_name: str, args: dict, sender_phone: str = None, rec
                 body=args.get("body", ""),
                 attachments=args.get("attachments")
             )
-        elif tool_name =="send_message_to_user":
-            message = args.get("message")
-            is_ai = args.get("is_ai",True)
-            return send_message_to_user(
-                sender_phone,
-                receiver_phone,
-                message,
-                is_ai
+
+            # desired_mode should be provided in args as True/False
+            # desired_mode should be provided in args as True/False
+
+        elif tool_name == "set_or_update_user_mode":
+            # desired_mode should be provided in args as True/False
+            return set_or_update_user_mode(
+                user_phone=sender_phone,   # controlling own mode
+                desired_mode=args.get("desired_mode")
             )
-        # Add more tool mappings here
+
+
+        elif tool_name == "check_and_update_todos":
+            # Just pass sender_phone
+            if not sender_phone:
+                return {"error": "sender_phone is required for check_and_update_todos"}
+            return check_and_update_todos(sender_phone)
+
         else:
             return {"error": f"Tool '{tool_name}' not found"}
 

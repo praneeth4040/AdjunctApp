@@ -6,7 +6,7 @@ from helpers.schema import all_tools
 
 
 # --- CONFIG ---
-GOOGLE_API_KEY = "AIzaSyDsDyoBB6x7Qni3_JoCKB40DEUk20wkj00"
+GOOGLE_API_KEY = "AIzaSyA0UqcJn4QhKSot7m6f9pQx5ldUrRglgYE"
 
 # ---TOOLS ---
 

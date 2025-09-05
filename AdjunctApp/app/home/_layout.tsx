@@ -11,7 +11,7 @@ export default function Layout() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      {/* This renders the current route (chats.tsx / ai.tsx) */}
+      {/* This renders the current route (chats.tsx / ai.tsx / todo.tsx) */}
       <View style={styles.content}>
         <Slot />
       </View>
@@ -37,6 +37,18 @@ export default function Layout() {
             name="sparkles"
             size={26}
             color={current === "ai" ? "#007AFF" : "#dcd0a8"}
+          />
+        </TouchableOpacity>
+
+        {/* New Todo Tab */}
+        <TouchableOpacity
+          onPress={() => router.push("/home/Todo")}
+          style={styles.tab}
+        >
+          <Ionicons
+            name="list"
+            size={26}
+            color={current === "Todo" ? "#007AFF" : "#dcd0a8"}
           />
         </TouchableOpacity>
       </SafeAreaView>

@@ -1,20 +1,49 @@
 // Polyfill must be at the very top
 import 'react-native-get-random-values';
 
-import { View, Text, TextInput, TouchableOpacity, Alert, Image } from 'react-native';
+import { 
+  View, 
+  Text, 
+  TextInput, 
+  TouchableOpacity, 
+  Alert, 
+  Image, 
+  StyleSheet,
+  ScrollView,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform
+} from 'react-native';
 import { useState, useEffect } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { getOrCreateKeys } from '../lib/encrypt'; // key generation
 
+// Get screen dimensions
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// Responsive helper functions
+const wp = (percentage: number): number => (screenWidth * percentage) / 100;
+const hp = (percentage: number): number => (screenHeight * percentage) / 100;
+
+// Font scaling based on screen width
+const getFontSize = (size: number): number => {
+  const scale = screenWidth / 375; // Base width (iPhone X/11/12/13 width)
+  const newSize = size * scale;
+  return Math.max(12, Math.min(newSize, size * 1.2)); // Min 12, max 20% larger than original
+};
+
 export default function ProfileSetup() {
   const [username, setUsername] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [base64Data, setBase64Data] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -57,13 +86,16 @@ export default function ProfileSetup() {
 
   const handleConfirm = async () => {
     if (!username.trim()) {
-      Alert.alert('Please enter your name');
+      Alert.alert('Validation Error', 'Please enter your name');
       return;
     }
+
+    setIsLoading(true);
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       Alert.alert('Error', 'User not authenticated');
+      setIsLoading(false);
       return;
     }
 
@@ -89,7 +121,8 @@ export default function ProfileSetup() {
 
       } catch (e: any) {
         console.error('Image upload exception:', e);
-        Alert.alert('Error', e.message || 'Something went wrong while uploading image');
+        Alert.alert('Upload Error', e.message || 'Something went wrong while uploading image');
+        setIsLoading(false);
         return;
       }
     }
@@ -112,75 +145,301 @@ export default function ProfileSetup() {
 
       if (updateError) throw updateError;
 
-      Alert.alert('Success', 'Profile updated!');
-      router.replace('/home/chats');
+      Alert.alert('Success', 'Profile created successfully!', [
+        { text: 'Continue', onPress: () => router.replace('/home/chats') }
+      ]);
 
     } catch (err: any) {
       console.error('Profile setup failed:', err);
-      Alert.alert('Error', err.message || 'Something went wrong');
+      Alert.alert('Setup Error', err.message || 'Something went wrong during profile setup');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#e6dbb9' }}>
-      <View style={{ paddingTop: 60, paddingHorizontal: 24 }}>
-        <Text style={{ fontFamily: 'Kreon-Regular', fontSize: 20, textAlign: 'center' }}>Adjunct</Text>
-        <Text style={{ fontFamily: 'Kreon-Bold', fontSize: 32, marginTop: 10 }}>Profile SetUp</Text>
-      </View>
+    <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.appTitle}>Adjunct</Text>
+            <Text style={styles.pageTitle}>Profile Setup</Text>
+            <Text style={styles.subtitle}>Complete your profile to get started</Text>
+          </View>
 
-      <View style={{
-        flex: 1,
-        marginTop: 24,
-        backgroundColor: '#f8f3dd',
-        borderTopLeftRadius: 40,
-        borderTopRightRadius: 40,
-        paddingHorizontal: 24,
-        paddingTop: 40,
-        alignItems: 'center',
-      }}>
-        <View style={{
-          backgroundColor: '#d9f0ea',
-          borderRadius: 20,
-          width: 200,
-          height: 200,
-          justifyContent: 'center',
-          alignItems: 'center',
-          position: 'relative'
-        }}>
-          {profileImage ? (
-            <Image
-              source={{ uri: profileImage }}
-              style={{ width: 120, height: 120, borderRadius: 60, resizeMode: 'cover' }}
-            />
-          ) : (
-            <Ionicons name="person" size={96} color="black" />
-          )}
+          {/* Main Content Card */}
+          <View style={styles.contentCard}>
+            {/* Profile Image Section */}
+            <View style={styles.imageSection}>
+              <View style={styles.imageContainer}>
+                {profileImage ? (
+                  <Image
+                    source={{ uri: profileImage }}
+                    style={styles.profileImage}
+                  />
+                ) : (
+                  <View style={styles.placeholderImage}>
+                    <Ionicons name="person" size={wp(20)} color="#666" />
+                  </View>
+                )}
+                
+                <TouchableOpacity
+                  onPress={pickImage}
+                  style={styles.editButton}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="camera" size={wp(5)} color="#4A90E2" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.imageHint}>Tap to add profile picture</Text>
+            </View>
 
-          <TouchableOpacity
-            onPress={pickImage}
-            style={{ position: 'absolute', bottom: 16, right: 16, backgroundColor: '#f8f3dd', borderRadius: 8, padding: 4 }}>
-            <Ionicons name="create-outline" size={20} color="black" />
-          </TouchableOpacity>
-        </View>
+            {/* Form Section */}
+            <View style={styles.formSection}>
+              {/* Phone Number (Read-only) */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Phone Number</Text>
+                <View style={styles.phoneInputContainer}>
+                  <Ionicons name="call" size={wp(5)} color="#666" style={styles.inputIcon} />
+                  <Text style={styles.phoneText}>{phoneNumber}</Text>
+                </View>
+              </View>
 
-        <View style={{ marginTop: 20, backgroundColor: '#d8cea3', width: '100%', paddingVertical: 14, paddingHorizontal: 20, borderRadius: 20 }}>
-          <Text style={{ fontSize: 16, fontFamily: 'Kreon-Regular', color: '#000' }}>{phoneNumber}</Text>
-        </View>
+              {/* Username Input */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Full Name</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="person" size={wp(5)} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    placeholder="Enter your full name"
+                    placeholderTextColor="#999"
+                    value={username}
+                    onChangeText={setUsername}
+                    style={styles.textInput}
+                    autoCapitalize="words"
+                    autoComplete="name"
+                  />
+                </View>
+              </View>
+            </View>
 
-        <TextInput
-          placeholder="Enter username"
-          placeholderTextColor="#000"
-          value={username}
-          onChangeText={setUsername}
-          style={{ marginTop: 28, backgroundColor: '#d8cea3', width: '100%', paddingVertical: 14, paddingHorizontal: 20, borderRadius: 20, fontSize: 18, fontFamily: 'Kreon-Regular' }}
-        />
-
-        <TouchableOpacity
-          onPress={handleConfirm}
-          style={{ marginTop: 32, backgroundColor: '#000', paddingVertical: 14, paddingHorizontal: 40, borderRadius: 20 }}>
-          <Text style={{ color: 'white', fontSize: 18, fontFamily: 'Kreon-SemiBold' }}>Confirm</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+            {/* Confirm Button */}
+            <TouchableOpacity
+              onPress={handleConfirm}
+              style={[styles.confirmButton, isLoading && styles.buttonDisabled]}
+              disabled={isLoading}
+              activeOpacity={0.8}
+            >
+              {isLoading ? (
+                <Text style={styles.buttonText}>Creating Profile...</Text>
+              ) : (
+                <>
+                  <Text style={styles.buttonText}>Complete Setup</Text>
+                  <Ionicons name="arrow-forward" size={wp(5)} color="#FFFFFF" />
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#DCD0A8',
+  },
+  container: {
+    flex: 1,
+  },
+  scrollContainer: {
+    flexGrow: 1,
+    paddingBottom: hp(2),
+  },
+  header: {
+    paddingHorizontal: wp(6),
+    paddingVertical: hp(3),
+    alignItems: 'center',
+  },
+  appTitle: {
+    fontFamily: 'Kreon-Bold',
+    fontSize: getFontSize(24),
+    color: '#000',
+    textAlign: 'center',
+    marginBottom: hp(1),
+  },
+  pageTitle: {
+    fontFamily: 'Kreon-Bold',
+    fontSize: getFontSize(32),
+    color: '#000',
+    textAlign: 'center',
+    marginBottom: hp(0.5),
+  },
+  subtitle: {
+    fontFamily: 'Kreon-Regular',
+    fontSize: getFontSize(16),
+    color: '#6f634f',
+    textAlign: 'center',
+  },
+  contentCard: {
+    flex: 1,
+    backgroundColor: '#F8F6F0',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: wp(6),
+    paddingTop: hp(4),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  imageSection: {
+    alignItems: 'center',
+    marginBottom: hp(4),
+  },
+  imageContainer: {
+    position: 'relative',
+    marginBottom: hp(1),
+  },
+  profileImage: {
+    width: wp(35),
+    height: wp(35),
+    borderRadius: wp(17.5),
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  placeholderImage: {
+    width: wp(35),
+    height: wp(35),
+    borderRadius: wp(17.5),
+    backgroundColor: '#E8E8E8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  editButton: {
+    position: 'absolute',
+    bottom: wp(1),
+    right: wp(1),
+    backgroundColor: '#FFFFFF',
+    borderRadius: wp(6),
+    width: wp(12),
+    height: wp(12),
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 2,
+    borderColor: '#F0F0F0',
+  },
+  imageHint: {
+    fontFamily: 'Kreon-Regular',
+    fontSize: getFontSize(14),
+    color: '#888',
+    textAlign: 'center',
+  },
+  formSection: {
+    marginBottom: hp(4),
+  },
+  inputGroup: {
+    marginBottom: hp(3),
+  },
+  inputLabel: {
+    fontFamily: 'Kreon-SemiBold',
+    fontSize: getFontSize(16),
+    color: '#333',
+    marginBottom: hp(1),
+    marginLeft: wp(1),
+  },
+  phoneInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8E4D6',
+    borderRadius: 16,
+    paddingVertical: hp(2),
+    paddingHorizontal: wp(4),
+    borderWidth: 1,
+    borderColor: '#D0C8B0',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: hp(2),
+    paddingHorizontal: wp(4),
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  inputIcon: {
+    marginRight: wp(3),
+  },
+  phoneText: {
+    flex: 1,
+    fontFamily: 'Kreon-Regular',
+    fontSize: getFontSize(16),
+    color: '#666',
+  },
+  textInput: {
+    flex: 1,
+    fontFamily: 'Kreon-Regular',
+    fontSize: getFontSize(16),
+    color: '#333',
+    paddingVertical: 0, // Remove default padding
+  },
+  confirmButton: {
+    backgroundColor: '#4A90E2',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: hp(2),
+    borderRadius: 16,
+    shadowColor: '#4A90E2',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+    marginTop: hp(2),
+    gap: wp(2),
+  },
+  buttonDisabled: {
+    backgroundColor: '#B0B0B0',
+    shadowOpacity: 0.1,
+  },
+  buttonText: {
+    fontFamily: 'Kreon-Bold',
+    fontSize: getFontSize(18),
+    color: '#FFFFFF',
+  },
+});

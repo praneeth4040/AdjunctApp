@@ -2,6 +2,7 @@ import { Stack, useRouter } from "expo-router";
 import { useFonts } from "expo-font";
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useCallback } from "react";
+import { GestureHandlerRootView } from 'react-native-gesture-handler'; // ✅ import this
 import { supabase } from "../lib/supabase"; // ✅ Adjust if needed
 
 SplashScreen.preventAutoHideAsync(); // Don’t auto-hide until ready
@@ -35,10 +36,11 @@ export default function RootLayout() {
     onLayoutRootView();
   }, [onLayoutRootView]);
 
-  // Show nothing until fonts loaded & nav handled
   if (!fontsLoaded) return null;
 
   return (
-    <Stack screenOptions={{ headerShown: false }} />
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false }} />
+    </GestureHandlerRootView>
   );
 }

@@ -100,8 +100,57 @@ send_email_tool = types.Tool(
                 "required": ["to", "subject", "body"]
             }
         )
+
     ]
 )
 
+
+# --- Tool: Set or Update User Mode ---
+set_or_update_user_mode_tool = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="set_or_update_user_mode",
+            description="Set or update a user's activity mode (offline, semiactive, active). Creates user if not exists.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_phone": {
+                        "type": "string",
+                        "description": "Phone number of the user."
+                    },
+                    "desired_mode": {
+                        "type": "string",
+                        "enum": ["offline", "semiactive", "active"],
+                        "description": "Desired mode to set for the user."
+                    }
+                },
+                "required": ["user_phone", "desired_mode"]
+            }
+        )
+    ]
+)
+from google.genai import types
+
+# --- Tool: Check and Update Todos ---
+check_and_update_todos_tool = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="check_and_update_todos",
+            description="Fetch tasks for a user and update expired ones. One-time tasks are marked; repeating tasks are shifted to the next valid time.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "sender_phone": {
+                        "type": "string",
+                        "description": "The phone number of the user whose tasks should be processed."
+                    }
+                },
+                "required": ["sender_phone"]
+            }
+        )
+    ]
+)
+
+
 # --- Export list for easy import ---
-all_tools = [get_chat_with_profiles_tool, send_email_tool,send_message_to_user_tool]
+all_tools = [get_chat_with_profiles_tool, send_email_tool,set_or_update_user_mode_tool,check_and_update_todos_tool]

@@ -91,57 +91,97 @@ const AIMessagingApp: React.FC = () => {
     }
   };
   
-  const sendMessage = async (): Promise<void> => {
-    if (!inputText.trim() || !userPhone) return;
-  
-    const userMessage: Message = {
-      id: Date.now(),
-      text: inputText,
-      sender: 'user',
-      timestamp: new Date()
-    };
-  
-    setMessages(prev => [...prev, userMessage]);
-    scrollToBottom();
-    setInputText('');
-  
-    await insertMessage(inputText, 'user');
-  
-    try {
-      const response = await axios.post(
-        'https://44c7dd299c15.ngrok-free.app/ask-ai',
-        {
-          query: inputText,
-          sender_phone: userPhone,
-          receiver_phone: 'ai',
-        }
-      );
-  
-      const aiText = response.data.reply || 'No AI response received.';
-  
-      const aiMessage: Message = {
-        id: Date.now() + 1,
-        text: aiText,
-        sender: 'ai',
-        timestamp: new Date()
-      };
-  
-      setMessages(prev => [...prev, aiMessage]);
-      scrollToBottom();
-  
-      await insertMessage(aiText, 'ai');
-    } catch (error) {
-      console.error('Sending error:', error);
-      const errorMessage: Message = {
-        id: Date.now() + 2,
-        text: 'Error getting AI response.',
-        sender: 'ai',
-        timestamp: new Date()
-      };
-  
-      setMessages(prev => [...prev, errorMessage]);
-    }
+const getChatHistoryForContext = async (): Promise<
+  { role: 'user' | 'assistant'; content: string }[]
+> => {
+  if (!userPhone) return [];
+
+  const { data, error } = await supabase
+    .from('chatbotmessages')
+    .select('text, is_ai, created_at')
+    .eq('sender_phone', userPhone)
+    .order('created_at', { ascending: true }) // ascending for chronological
+    .limit(50);
+
+  if (error) {
+    console.error('Error fetching chat history:', error.message);
+    return [];
+  }
+
+  if (!data) return [];
+
+  return data.map((msg) => ({
+    role: msg.is_ai ? 'assistant' : 'user',
+    content: msg.text,
+  }));
+};
+
+
+const sendMessage = async (): Promise<void> => {
+  if (!inputText.trim() || !userPhone) return;
+
+  const userMessage: Message = {
+    id: Date.now(),
+    text: inputText,
+    sender: 'user',
+    timestamp: new Date(),
   };
+
+  setMessages((prev) => [...prev, userMessage]);
+  scrollToBottom();
+  setInputText('');
+
+  await insertMessage(inputText, 'user');
+
+  try {
+    // Fetch chat history for context
+    const history = await getChatHistoryForContext();
+
+    // Convert history to a single string format
+    const historyString = history
+      .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`)
+      .join('\n');
+
+    // Append the current input
+    const finalMessage = `${historyString}\nUser: ${inputText}`;
+
+    // Send the single string message to the backend
+    const response = await axios.post(
+      'https://f817258401b2.ngrok-free.app/ask-ai',
+      {
+        query: finalMessage, // 👈 Single string format
+        sender_phone: userPhone,
+        receiver_phone: 'ai',
+      }
+    );
+
+    const aiText = response.data.reply || 'No AI response received.';
+
+    const aiMessage: Message = {
+      id: Date.now() + 1,
+      text: aiText,
+      sender: 'ai',
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, aiMessage]);
+    scrollToBottom();
+
+    await insertMessage(aiText, 'ai');
+  } catch (error) {
+    console.error('Sending error:', error);
+    const errorMessage: Message = {
+      id: Date.now() + 2,
+      text: 'Error getting AI response.',
+      sender: 'ai',
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, errorMessage]);
+  }
+};
+
+
   
 
   const fetchMessages = async () => {
@@ -182,12 +222,13 @@ const AIMessagingApp: React.FC = () => {
     setLoading(true);
 
     const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('sender_phone', userPhone)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
+    .from('messages')
+    .select('*')
+    .or(`sender_phone.eq.${userPhone},is_ai.eq.true`) // fetch both user + AI
+    .order('created_at', { ascending: false })
+    .limit(50);
+  
+    console.log("fetched messages",data)
     if (error) {
       console.error(error.message);
       setLoading(false);
@@ -198,18 +239,20 @@ const AIMessagingApp: React.FC = () => {
     let lastUserMessage: any = null;
 
     data.reverse().forEach((msg) => {
+      console.log("checking mesge",msg)
       if (!msg.is_ai) {
         lastUserMessage = msg;
       } else if (msg.is_ai && lastUserMessage) {
         pairs.push({
           id: msg.id,
-          userText: lastUserMessage.text,
-          aiText: msg.text,
+          userText: lastUserMessage.message,
+          aiText: msg.message,
           createdAt: msg.created_at,
         });
         lastUserMessage = null;
       }
     });
+    console.log("buit pairs", pairs)
 
     setRecentActions(pairs.reverse());
     setLoading(false);
@@ -228,7 +271,7 @@ const AIMessagingApp: React.FC = () => {
           style={[styles.tab, activeTab === 'chat' && styles.activeTab]}
           onPress={() => setActiveTab('chat')}
         >
-          <ChatIcon />
+          
           <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>
             Chat
           </Text>
@@ -237,7 +280,7 @@ const AIMessagingApp: React.FC = () => {
           style={[styles.tab, activeTab === 'recent' && styles.activeTab]}
           onPress={() => setActiveTab('recent')}
         >
-          <ClockIcon />
+          
           <Text style={[styles.tabText, activeTab === 'recent' && styles.activeTabText]}>
             Recent Actions
           </Text>
@@ -344,19 +387,22 @@ const AIMessagingApp: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFF' },
+  container: { flex: 1, backgroundColor: '#E9E9E9',borderRadius:25 },
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: '#F9FAFB',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    marginTop: 40,
+   
+    marginTop: 25,
   },
   tab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    
+    
     paddingVertical: 12,
   },
   activeTab: {
