@@ -1,3 +1,1095 @@
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Image,
+  StatusBar,
+  Alert,
+  TextInput,
+  Modal,
+  Animated,
+  BackHandler,
+} from "react-native";
+import { PanGestureHandler } from "react-native-gesture-handler";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from "../../lib/supabase";
+import { useRouter, useFocusEffect } from "expo-router";
+import * as Contacts from "expo-contacts";
+import LinearGradient from "react-native-linear-gradient";
+import * as SecureStore from "expo-secure-store";
+
+interface Conversation {
+  id: string | number;
+  phoneNumber: string;
+  name: string;
+  profileImage: string;
+  lastMessage: string;
+  time: string;
+  unreadCount: number;
+  status?: "active" | "semiactive" | "offline";
+}
+
+interface SupabaseMessage {
+  id: string | number;
+  sender_phone: string;
+  receiver_phone: string;
+  message: string;
+  created_at: string;
+  is_read: boolean;
+}
+
+interface UserMode {
+  phone_number: string;
+  mode: "active" | "semiactive" | "offline";
+}
+
+export default function ChatsScreen() {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [userName, setUserName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [contactsMap, setContactsMap] = useState<Record<string, string>>({});
+  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const statusSubscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const router = useRouter();
+  const [userStatus, setUserStatus] = useState<"active" | "semiactive" | "offline">("offline");
+  const [lockedChats, setLockedChats] = useState<string[]>([]);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isSearchActive, setIsSearchActive] = useState(false);
+  
+  // UNLOCK SELECTION MODE STATE
+  const [unlockSelectionMode, setUnlockSelectionMode] = useState(false);
+  const [selectedUnlockChats, setSelectedUnlockChats] = useState<string[]>([]);
+  
+  // LOCK SELECTION MODE STATE
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedChats, setSelectedChats] = useState<string[]>([]);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState("");
+  const [isSettingPassword, setIsSettingPassword] = useState(false);
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+  const [unlockPasswordInput, setUnlockPasswordInput] = useState("");
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [contactsLoaded, setContactsLoaded] = useState(false);
+  
+  // Swipe gesture for unlock
+  const translateY = useRef(new Animated.Value(0)).current;
+  
+  const normalizePhone = (phone?: string) => phone?.replace(/\D/g, "") || "";
+
+  // Get phone number from AsyncStorage
+  const getPhoneFromStorage = async () => {
+    try {
+      const storedPhone = await AsyncStorage.getItem('senderPhone');
+      return storedPhone ? normalizePhone(storedPhone) : null;
+    } catch (error) {
+      console.error('Error getting phone from AsyncStorage:', error);
+      return null;
+    }
+  };
+
+  const loadContacts = async () => {
+    if (contactsLoaded) return contactsMap; // Don't reload if already loaded
+    
+    try {
+      // Try loading from AsyncStorage first
+      const storedContacts = await AsyncStorage.getItem('contactsMap');
+      if (storedContacts) {
+        const parsedContacts = JSON.parse(storedContacts);
+        setContactsMap(parsedContacts);
+        setContactsLoaded(true);
+        return parsedContacts;
+      }
+  
+      // Only fetch from device if not in storage
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        setContactsLoaded(true);
+        return {};
+      }
+  
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
+      });
+  
+      const phoneMap: Record<string, string> = {};
+      data.forEach((contact) => {
+        contact.phoneNumbers?.forEach((num) => {
+          const clean = normalizePhone(num.number);
+          if (clean) phoneMap[clean] = contact.name || "";
+        });
+      });
+  
+      // Save to AsyncStorage
+      await AsyncStorage.setItem('contactsMap', JSON.stringify(phoneMap));
+      setContactsMap(phoneMap);
+      setContactsLoaded(true);
+      return phoneMap;
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+      setContactsLoaded(true);
+      return {};
+    }
+  };
+  
+  const getUserProfile = async (senderPhone: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("name")
+        .eq("phone_number", senderPhone)
+        .single();
+
+      if (error) {
+        console.error("Error fetching profile:", error.message);
+      } else if (data) {
+        setUserName(data.name);
+      }
+    } catch (err) {
+      console.error("Unexpected error:", err);
+    }
+  };
+
+  const initializeUserStatus = async (phone: string) => {
+    try {
+      const { data: existingRecord } = await supabase
+        .from("usersmodes")
+        .select("phone")
+        .eq("phone", phone)
+        .single();
+
+      if (!existingRecord) {
+        const { error } = await supabase
+          .from("usersmodes")
+          .insert({ phone: phone, mode: "offline" });
+
+        if (error) {
+          console.error("Error creating initial user status record:", error.message);
+        } else {
+          console.log(`Created initial status record for ${phone} with default mode: offline`);
+          setUserStatus("offline");
+        }
+      } else {
+        await fetchUserStatus(phone);
+      }
+    } catch (error) {
+      console.error("Error in initializeUserStatus:", error);
+      setUserStatus("offline");
+    }
+  };
+
+  const fetchUserStatus = async (phone: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("usersmodes")
+        .select("mode")
+        .eq("phone", phone)
+        .single();
+
+      if (error) {
+        console.error("Error fetching user status:", error.message);
+        setUserStatus("offline");
+      } else {
+        const userData = data as UserMode;
+        const mode = userData?.mode || "offline";
+        setUserStatus(mode);
+      }
+    } catch (error) {
+      console.error("Error in fetchUserStatus:", error);
+      setUserStatus("offline");
+    }
+  };
+
+  const fetchLockedChats = async (phone: string) => {
+    const locked = await getLockedChats(phone);
+    setLockedChats(locked);
+  };
+
+  const subscribeToStatusChanges = (phone: string) => {
+    if (statusSubscriptionRef.current) {
+      supabase.removeChannel(statusSubscriptionRef.current);
+    }
+
+    const channel = supabase.channel("usersmodes-realtime");
+
+    channel.on(
+      "postgres_changes",
+      { 
+        event: "*", 
+        schema: "public", 
+        table: "usersmodes",
+        filter: `phone_number=eq.${phone}`
+      },
+      (payload) => {
+        if (payload.new && (payload.new as UserMode).mode) {
+          setUserStatus((payload.new as UserMode).mode);
+        }
+      }
+    );
+
+    channel.subscribe();
+    statusSubscriptionRef.current = channel;
+  };
+
+  const fetchUserAndContacts = useCallback(async () => {
+    if (isInitialized) return; // Prevent re-initialization
+    
+    const contacts = await loadContacts();
+  
+    const storedPhone = await getPhoneFromStorage();
+    
+    if (storedPhone) {
+      setPhoneNumber(storedPhone);
+      await initializeUserStatus(storedPhone);
+      subscribeToStatusChanges(storedPhone);
+      await fetchConversations(storedPhone);
+      subscribeToMessages(storedPhone);
+      await fetchLockedChats(storedPhone);
+      setIsInitialized(true);
+    } else {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+  
+      const { data } = await supabase
+        .from("profiles")
+        .select("name, phone_number")
+        .eq("user_id", user.id)
+        .single();
+  
+      const phone = normalizePhone(data?.phone_number);
+      setUserName(data?.name || "User");
+      
+      if (phone) {
+        setPhoneNumber(phone);
+        await AsyncStorage.setItem('senderPhone', phone);
+        await initializeUserStatus(phone);
+        subscribeToStatusChanges(phone);
+        await fetchConversations(phone);
+        subscribeToMessages(phone);
+        await fetchLockedChats(phone);
+        setIsInitialized(true);
+      }
+    }
+  }, [isInitialized]);
+
+  // UNLOCK SELECTION FUNCTIONS
+  const toggleUnlockSelectionMode = () => {
+    setUnlockSelectionMode(!unlockSelectionMode);
+    setSelectedUnlockChats([]);
+  };
+
+  const exitUnlockSelectionMode = () => {
+    setUnlockSelectionMode(false);
+    setSelectedUnlockChats([]);
+  };
+
+  const toggleUnlockChatSelection = (phoneNumber: string) => {
+    const normalizedPhone = normalizePhone(phoneNumber);
+    setSelectedUnlockChats(prev => 
+      prev.includes(normalizedPhone) 
+        ? prev.filter(p => p !== normalizedPhone)
+        : [...prev, normalizedPhone]
+    );
+  };
+
+  // HANDLE UNLOCK SELECTED CHATS
+  const handleUnlockSelectedChats = async () => {
+    if (selectedUnlockChats.length === 0) {
+      Alert.alert("No Selection", "Please select chats to unlock");
+      return;
+    }
+
+    try {
+      for (const chatPhone of selectedUnlockChats) {
+        await unlockChat(phoneNumber, chatPhone);
+      }
+      
+      // Update UI
+      setLockedChats(prev => prev.filter(phone => !selectedUnlockChats.includes(phone)));
+      setSelectedUnlockChats([]);
+      setUnlockSelectionMode(false);
+      
+      Alert.alert("Chats Unlocked", `${selectedUnlockChats.length} chat(s) have been unlocked`);
+    } catch (error) {
+      console.error("Error unlocking chats:", error);
+      Alert.alert("Error", "Failed to unlock chats");
+    }
+  };
+
+  const fetchConversations = async (currentUserPhone: string) => {
+    const { data: messages } = await supabase
+      .from("messages")
+      .select("*")
+      .or(`sender_phone.eq.${currentUserPhone},receiver_phone.eq.${currentUserPhone}`)
+      .order("created_at", { ascending: false });
+
+    const latestMap = new Map<string, SupabaseMessage>();
+    const unreadMap: Record<string, number> = {};
+
+    messages?.forEach((msg) => {
+      const partner =
+        msg.sender_phone === currentUserPhone ? msg.receiver_phone : msg.sender_phone;
+      const clean = normalizePhone(partner);
+
+      if (!latestMap.has(clean)) latestMap.set(clean, msg);
+
+      if (msg.receiver_phone === currentUserPhone && !msg.is_read) {
+        unreadMap[clean] = (unreadMap[clean] || 0) + 1;
+      }
+    });
+
+    const partnerPhones = Array.from(latestMap.keys());
+    const { data: partners } = await supabase
+      .from("profiles")
+      .select("phone_number, profile_picture")
+      .in("phone_number", partnerPhones);
+
+    const result: Conversation[] = partnerPhones.map((phone) => {
+      const msg = latestMap.get(phone)!;
+      const partner = partners?.find(
+        (p) => normalizePhone(p.phone_number) === phone
+      );
+
+      const randomStatus = ["active", "semiactive", "offline"][
+        Math.floor(Math.random() * 3)
+      ] as "active" | "semiactive" | "offline";
+
+      return {
+        id: msg.id,
+        phoneNumber: phone,
+        name: contactsMap[phone] || phone,
+        profileImage: partner?.profile_picture || "",
+        lastMessage: msg.message,
+        time: new Date(msg.created_at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        unreadCount: unreadMap[phone] || 0,
+        status: randomStatus,
+      };
+    });
+
+    setConversations(result);
+  };
+
+  // LOCK/UNLOCK FUNCTIONS
+  const LOCK_KEY = "chatlock_password";
+  
+  const saveLockPassword = async (phoneNumber: string, password: string) => {
+    await SecureStore.setItemAsync(LOCK_KEY, password);
+    
+    const { error } = await supabase
+      .from("profiles")
+      .update({ lock_password: password })
+      .eq("phone_number", phoneNumber);
+
+    if (error) {
+      console.error("Failed to save lock password to Supabase:", error.message);
+    }
+  };
+  
+  const getLocalLockPassword = async () => {
+    return await SecureStore.getItemAsync(LOCK_KEY);
+  };
+
+  const getLockedChats = async (userPhone: string): Promise<string[]> => {
+    const { data, error } = await supabase
+      .from("chatlock")
+      .select("chat_phone")
+      .eq("user_phone", userPhone);
+
+    if (error) {
+      console.error("Failed to fetch locked chats:", error.message);
+      return [];
+    }
+
+    return data.map((row) => row.chat_phone);
+  };
+
+  const getSupabaseLockPassword = async (phoneNumber: string) => {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("lock_password")
+      .eq("phone_number", phoneNumber)
+      .single();
+
+    if (error) {
+      console.error("Error fetching lock password from Supabase:", error.message);
+      return null;
+    }
+
+    return data?.lock_password || null;
+  };
+
+  const lockChat = async (userPhone: string, chatPhone: string) => {
+    const { error } = await supabase
+      .from("chatlock")
+      .upsert([{ user_phone: userPhone, chat_phone: chatPhone }]);
+
+    if (error) {
+      console.error("Failed to lock chat:", error.message);
+      return false;
+    }
+
+    return true;
+  };
+
+  const unlockChat = async (userPhone: string, chatPhone: string) => {
+    const { error } = await supabase
+      .from("chatlock")
+      .delete()
+      .eq("user_phone", userPhone)
+      .eq("chat_phone", chatPhone);
+
+    if (error) {
+      console.error("Failed to unlock chat:", error.message);
+      return false;
+    }
+
+    return true;
+  };
+
+  // SELECTION MODE FUNCTIONS
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    setSelectedChats([]);
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedChats([]);
+  };
+
+  const toggleChatSelection = (phoneNumber: string) => {
+    const normalizedPhone = normalizePhone(phoneNumber);
+    setSelectedChats(prev => 
+      prev.includes(normalizedPhone) 
+        ? prev.filter(p => p !== normalizedPhone)
+        : [...prev, normalizedPhone]
+    );
+  };
+
+  // CHECK IF PASSWORD EXISTS
+  const checkPasswordExists = async () => {
+    const localPassword = await getLocalLockPassword();
+    const supabasePassword = await getSupabaseLockPassword(phoneNumber);
+    return localPassword || supabasePassword;
+  };
+
+  // HANDLE LOCK BUTTON PRESS
+  const handleLockSelectedChats = async () => {
+    if (selectedChats.length === 0) {
+      Alert.alert("No Selection", "Please select chats to lock");
+      return;
+    }
+
+    const passwordExists = await checkPasswordExists();
+    
+    if (!passwordExists) {
+      // First time - set password
+      setIsSettingPassword(true);
+      setShowPasswordModal(true);
+    } else {
+      // Password exists - verify and lock
+      setIsSettingPassword(false);
+      setShowPasswordModal(true);
+    }
+  };
+
+  // HANDLE PASSWORD SETUP/VERIFICATION
+  const handlePasswordSubmit = async () => {
+    if (isSettingPassword) {
+      // Setting new password
+      if (passwordInput.length < 4) {
+        Alert.alert("Password Too Short", "Password must be at least 4 characters");
+        return;
+      }
+      
+      if (passwordInput !== confirmPasswordInput) {
+        Alert.alert("Password Mismatch", "Passwords don't match");
+        return;
+      }
+
+      await saveLockPassword(phoneNumber, passwordInput);
+      await lockSelectedChats();
+    } else {
+      // Verifying existing password
+      const storedPassword = await getLocalLockPassword() || await getSupabaseLockPassword(phoneNumber);
+      
+      if (passwordInput === storedPassword) {
+        await lockSelectedChats();
+      } else {
+        Alert.alert("Wrong Password", "Please enter the correct password");
+        return;
+      }
+    }
+
+    // Reset modal state
+    setShowPasswordModal(false);
+    setPasswordInput("");
+    setConfirmPasswordInput("");
+  };
+
+  // LOCK SELECTED CHATS
+  const lockSelectedChats = async () => {
+    try {
+      for (const chatPhone of selectedChats) {
+        await lockChat(phoneNumber, chatPhone);
+      }
+      
+      // Update UI
+      setLockedChats(prev => [...prev, ...selectedChats]);
+      setSelectedChats([]);
+      setSelectionMode(false); // Auto-exit selection mode
+      
+      Alert.alert("Chats Locked", `${selectedChats.length} chat(s) have been locked`);
+    } catch (error) {
+      console.error("Error locking chats:", error);
+      Alert.alert("Error", "Failed to lock chats");
+    }
+  };
+
+  // HANDLE UNLOCK REQUEST (via swipe)
+  const handleUnlockRequest = async () => {
+    const passwordExists = await checkPasswordExists();
+    
+    if (!passwordExists) {
+      Alert.alert("No Password Set", "You haven't set a lock password yet");
+      return;
+    }
+    
+    setShowUnlockModal(true);
+  };
+
+  // VERIFY PASSWORD AND UNLOCK
+  const handleUnlockVerification = async () => {
+    const storedPassword = await getLocalLockPassword() || await getSupabaseLockPassword(phoneNumber);
+    
+    if (unlockPasswordInput === storedPassword) {
+      setIsUnlocked(true);
+      setShowUnlockModal(false);
+      setUnlockPasswordInput("");
+      
+      // Auto-hide after 30 seconds for security
+      setTimeout(() => {
+        setIsUnlocked(false);
+      }, 30000);
+      
+      Alert.alert("Unlocked", "Locked chats are now visible for 30 seconds");
+    } else {
+      Alert.alert("Wrong Password", "Please enter the correct password");
+    }
+  };
+
+  // SWIPE GESTURE HANDLER
+  const onGestureEvent = Animated.event(
+    [{ nativeEvent: { translationY: translateY } }],
+    { useNativeDriver: false }
+  );
+
+  const onHandlerStateChange = (event: any) => {
+    if (event.nativeEvent.state === 5) { // END state
+      if (event.nativeEvent.translationY > 50) {
+        // Swipe down detected
+        handleUnlockRequest();
+      }
+      // Reset animation
+      Animated.spring(translateY, {
+        toValue: 0,
+        useNativeDriver: false,
+      }).start();
+    }
+  };
+
+  const markMessagesAsRead = async (partnerPhone: string) => {
+    setConversations((prev) =>
+      prev.map((c) =>
+        normalizePhone(c.phoneNumber) === normalizePhone(partnerPhone)
+          ? { ...c, unreadCount: 0 }
+          : c
+      )
+    );
+
+    await supabase
+      .from("messages")
+      .update({ is_read: true })
+      .eq("sender_phone", partnerPhone)
+      .eq("receiver_phone", phoneNumber)
+      .eq("is_read", false);
+  };
+
+  const subscribeToMessages = (currentUserPhone: string) => {
+    if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
+
+    const channel = supabase.channel("messages-realtime");
+
+    channel.on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "messages" },
+      async (payload) => {
+        const newMsg = payload.new as SupabaseMessage;
+        if (
+          newMsg.sender_phone !== currentUserPhone &&
+          newMsg.receiver_phone !== currentUserPhone
+        )
+          return;
+
+        const partner =
+          newMsg.sender_phone === currentUserPhone
+            ? newMsg.receiver_phone
+            : newMsg.sender_phone;
+        const clean = normalizePhone(partner);
+
+        const existing = conversations.find(
+          (c) => normalizePhone(c.phoneNumber) === clean
+        );
+
+        let profileImage = existing?.profileImage || "";
+        if (!existing) {
+          const { data: partnerData } = await supabase
+            .from("profiles")
+            .select("profile_picture")
+            .eq("phone_number", partner)
+            .single();
+          profileImage = partnerData?.profile_picture || "";
+        }
+
+        const unreadCount =
+          newMsg.receiver_phone === currentUserPhone && !newMsg.is_read
+            ? (existing?.unreadCount || 0) + 1
+            : existing?.unreadCount || 0;
+
+        const updatedConv: Conversation = {
+          id: newMsg.id,
+          phoneNumber: partner,
+          name: contactsMap[clean] || partner,
+          profileImage,
+          lastMessage: newMsg.message,
+          time: new Date(newMsg.created_at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          unreadCount,
+          status: existing?.status || "offline",
+        };
+
+        setConversations((prev) => [
+          updatedConv,
+          ...prev.filter((c) => normalizePhone(c.phoneNumber) !== clean),
+        ]);
+      }
+    );
+
+    channel.subscribe();
+    subscriptionRef.current = channel;
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      if (phoneNumber && contactsLoaded && isInitialized) {
+        // Only refresh conversations, not contacts or other data
+        fetchConversations(phoneNumber);
+      }
+    }, [phoneNumber, contactsLoaded, isInitialized])
+  );
+
+  useEffect(() => {
+    if (phoneNumber) {
+      getUserProfile(phoneNumber);
+    }
+  }, [phoneNumber]);
+
+  useEffect(() => {
+    fetchUserAndContacts();
+    
+    // Handle Android back button
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    
+    return () => {
+      if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
+      if (statusSubscriptionRef.current) supabase.removeChannel(statusSubscriptionRef.current);
+      backHandler.remove();
+    };
+  }, [fetchUserAndContacts, selectionMode]);
+
+  const getNextStatus = (currentStatus: "active" | "semiactive" | "offline") => {
+    switch (currentStatus) {
+      case "active": return "semiactive";
+      case "semiactive": return "offline";
+      case "offline": return "active";
+      default: return "active";
+    }
+  };
+
+  const toggleUserStatus = async () => {
+    if (!phoneNumber) {
+      console.log("No phone number available");
+      return;
+    }
+
+    const newStatus = getNextStatus(userStatus);
+    setUserStatus(newStatus);
+
+    try {
+      const { error } = await supabase
+        .from("usersmodes")
+        .update({ mode: newStatus })
+        .eq("phone", phoneNumber);
+
+      if (error) {
+        console.error("Failed to update status:", error.message);
+        setUserStatus(userStatus);
+      } else {
+        console.log(`Status updated to: ${newStatus}`);
+      }
+    } catch (error) {
+      console.error("Error updating status:", error);
+      setUserStatus(userStatus);
+    }
+  };
+
+  const getStatusDotStyle = (status: "active" | "semiactive" | "offline") => {
+    switch (status) {
+      case "active": return styles.activeDot;
+      case "semiactive": return styles.semiactiveDot;
+      case "offline": return styles.offlineDot;
+      default: return styles.offlineDot;
+    }
+  };
+
+  const handleOpenChat = (phone: string) => {
+    if (selectionMode) {
+      toggleChatSelection(phone);
+      return;
+    }
+    
+    if (unlockSelectionMode) {
+      toggleUnlockChatSelection(phone);
+      return;
+    }
+    
+    markMessagesAsRead(phone);
+    router.push(`/chats/${phone}`);
+  };
+
+  // Handle Android back button in selection mode
+  const handleBackPress = () => {
+    if (selectionMode) {
+      exitSelectionMode();
+      return true; // Prevent default back action
+    }
+    if (unlockSelectionMode) {
+      exitUnlockSelectionMode();
+      return true;
+    }
+    return false; // Allow default back action
+  };
+
+  const renderChatItem = ({ item }: { item: Conversation }) => {
+    const isSelected = selectedChats.includes(normalizePhone(item.phoneNumber));
+    const isUnlockSelected = selectedUnlockChats.includes(normalizePhone(item.phoneNumber));
+    
+    return (
+      <TouchableOpacity 
+        style={[
+          styles.chatItem,
+          ((selectionMode && isSelected) || (unlockSelectionMode && isUnlockSelected)) && styles.selectedChatItem
+        ]} 
+        onPress={() => handleOpenChat(item.phoneNumber)}
+        onLongPress={() => {
+          if (!selectionMode && !unlockSelectionMode) {
+            setSelectionMode(true);
+            toggleChatSelection(item.phoneNumber);
+          }
+        }}
+      >
+        {(selectionMode || unlockSelectionMode) && (
+          <View style={styles.selectionCircle}>
+            {(isSelected || isUnlockSelected) && <View style={styles.selectionFill} />}
+          </View>
+        )}
+        
+        {item.profileImage ? (
+          <Image source={{ uri: item.profileImage }} style={styles.avatar} />
+        ) : (
+          <View style={styles.defaultAvatar}>
+            <Ionicons name="person" size={24} color="#666" />
+          </View>
+        )}
+        
+        <View style={styles.chatInfo}>
+          <Text style={styles.chatName}>{item.name}</Text>
+          <Text style={styles.chatMessage} numberOfLines={1}>
+            {item.lastMessage}
+          </Text>
+        </View>
+        
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={styles.chatTime}>{item.time}</Text>
+          {item.unreadCount > 0 && (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadText}>{item.unreadCount}</Text>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // FILTER CONVERSATIONS BASED ON LOCK STATUS
+  const getVisibleConversations = () => {
+    if (isUnlocked) {
+      return conversations; // Show all when unlocked
+    } else {
+      return conversations.filter(
+        c => !lockedChats.includes(normalizePhone(c.phoneNumber))
+      );
+    }
+  };
+
+  // GET LOCKED CONVERSATIONS FOR UNLOCK MODE
+  const getLockedConversations = () => {
+    return conversations.filter(
+      c => lockedChats.includes(normalizePhone(c.phoneNumber))
+    );
+  };
+
+  return (
+    <View style={styles.outerContainer}>
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <StatusBar barStyle="dark-content" backgroundColor="#dcd0a8" />
+        
+        {/* HEADER WITH SELECTION MODE */}
+        <View style={styles.header}>
+          {selectionMode ? (
+            <View style={styles.selectionHeader}>
+              <TouchableOpacity onPress={exitSelectionMode} style={styles.exitButton}>
+                <Ionicons name="close" size={24} color="black" />
+                <Text style={styles.exitText}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionCount}>
+                {selectedChats.length} selected
+              </Text>
+              <TouchableOpacity
+                onPress={handleLockSelectedChats}
+                disabled={selectedChats.length === 0}
+                style={[
+                  styles.lockButton,
+                  selectedChats.length === 0 && styles.lockButtonDisabled
+                ]}
+              >
+                <Ionicons name="lock-closed" size={20} color="#fff" />
+                <Text style={styles.lockButtonText}>Lock</Text>
+              </TouchableOpacity>
+            </View>
+          ) : unlockSelectionMode ? (
+            <View style={styles.selectionHeader}>
+              <TouchableOpacity onPress={exitUnlockSelectionMode} style={styles.exitButton}>
+                <Ionicons name="close" size={24} color="black" />
+                <Text style={styles.exitText}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionCount}>
+                {selectedUnlockChats.length} selected
+              </Text>
+              <TouchableOpacity
+                onPress={handleUnlockSelectedChats}
+                disabled={selectedUnlockChats.length === 0}
+                style={[
+                  styles.unlockButton,
+                  selectedUnlockChats.length === 0 && styles.unlockButtonDisabled
+                ]}
+              >
+                <Ionicons name="lock-open" size={20} color="#fff" />
+                <Text style={styles.unlockButtonText}>Unlock</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <View>
+                <Text style={styles.greeting}>Good morning</Text>
+                <Text style={styles.username}>{userName || "Loading..."}</Text>
+              </View>
+              <View style={styles.headerIcons}>
+                <TouchableOpacity
+                  style={styles.searchButton}
+                  onPress={() => setIsSearchActive(!isSearchActive)}
+                >
+                  <Ionicons name="search" size={24} color="black" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={toggleUserStatus} style={styles.statusTouchable}>
+                  <View style={[styles.statusDot, getStatusDotStyle(userStatus)]} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.profileCircle}
+                  onPress={() => router.push("/home/settings")}
+                >
+                  <Ionicons name="person" size={20} color="#555" />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* SWIPE AREA FOR UNLOCK */}
+        <PanGestureHandler
+          onGestureEvent={onGestureEvent}
+          onHandlerStateChange={onHandlerStateChange}
+        >
+          <Animated.View style={styles.chatsSection}>
+            {/* UNLOCK INDICATOR */}
+            {lockedChats.length > 0 && !isUnlocked && !unlockSelectionMode && (
+              <View style={styles.unlockIndicator}>
+                <Ionicons name="chevron-down" size={16} color="#666" />
+                <Text style={styles.unlockText}>
+                  Swipe down to unlock {lockedChats.length} hidden chat(s)
+                </Text>
+                <TouchableOpacity
+                  style={styles.unlockSelectButton}
+                  onPress={toggleUnlockSelectionMode}
+                >
+                  <Text style={styles.unlockSelectButtonText}>Select to unlock</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            
+            <FlatList
+              data={unlockSelectionMode ? getLockedConversations() : getVisibleConversations()}
+              renderItem={renderChatItem}
+              keyExtractor={(item) => item.id.toString()}
+              contentContainerStyle={{ padding: 16, paddingTop: 24 }}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <Text style={styles.emptyText}>
+                  {unlockSelectionMode 
+                    ? "No locked chats available"
+                    : lockedChats.length > 0 && !isUnlocked 
+                    ? "All chats are locked. Swipe down to unlock."
+                    : "No conversations yet — start a chat!"
+                  }
+                </Text>
+              }
+            />
+          </Animated.View>
+        </PanGestureHandler>
+
+        {/* PASSWORD MODAL */}
+        <Modal
+          visible={showPasswordModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowPasswordModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <Text style={styles.modalTitle}>
+                {isSettingPassword ? "Set Lock Password" : "Enter Password"}
+              </Text>
+              
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Enter password"
+                value={passwordInput}
+                onChangeText={setPasswordInput}
+                secureTextEntry
+                autoFocus
+              />
+              
+              {isSettingPassword && (
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Confirm password"
+                  value={confirmPasswordInput}
+                  onChangeText={setConfirmPasswordInput}
+                  secureTextEntry
+                />
+              )}
+              
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={styles.modalCancelButton}
+                  onPress={() => {
+                    setShowPasswordModal(false);
+                    setPasswordInput("");
+                    setConfirmPasswordInput("");
+                  }}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.modalConfirmButton}
+                  onPress={handlePasswordSubmit}
+                >
+                  <Text style={styles.modalConfirmText}>
+                    {isSettingPassword ? "Set Password" : "Lock Chats"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* UNLOCK MODAL */}
+        <Modal
+          visible={showUnlockModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowUnlockModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <Text style={styles.modalTitle}>Enter Password to Unlock</Text>
+              
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Enter password"
+                value={unlockPasswordInput}
+                onChangeText={setUnlockPasswordInput}
+                secureTextEntry
+                autoFocus
+              />
+              
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={styles.modalCancelButton}
+                  onPress={() => {
+                    setShowUnlockModal(false);
+                    setUnlockPasswordInput("");
+                  }}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.modalConfirmButton}
+                  onPress={handleUnlockVerification}
+                >
+                  <Text style={styles.modalConfirmText}>Unlock</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* PLUS BUTTON */}
+        <TouchableOpacity
+          style={styles.plusButton}
+          onPress={() => router.push("/new-chat")}
+        >
+          <Ionicons name="add" size={28} color="#fff" />
+        </TouchableOpacity>
+      </SafeAreaView>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   outerContainer: { flex: 1, backgroundColor: "#E9E9E9" },
   container: { flex: 1, backgroundColor: "#dcd0a8" },
@@ -102,26 +1194,6 @@ const styles = StyleSheet.create({
     fontFamily: "Kreon-Bold",
   },
   
-  // SECRET ACCESS BUTTON
-  secretAccessButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FFE4D6",
-    marginHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#FF6B35",
-  },
-  secretAccessText: {
-    fontSize: 16,
-    fontFamily: "Kreon-Bold",
-    color: "#FF6B35",
-    marginHorizontal: 8,
-  },
-  
   chatsSection: {
     flex: 1,
     backgroundColor: "#E9E9E9",
@@ -130,26 +1202,34 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   
-  // SECTION HEADERS
-  sectionHeader: {
+  // UNLOCK INDICATOR
+  unlockIndicator: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 4,
-    backgroundColor: "#E9E9E9",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#F0F0F0",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0E0E0",
   },
-  sectionTitle: {
-    fontSize: 18,
+  unlockText: {
+    fontSize: 14,
+    color: "#666",
+    marginLeft: 4,
+    fontFamily: "Kreon-Regular",
+    flex: 1,
+  },
+  unlockSelectButton: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  unlockSelectButtonText: {
+    color: "#fff",
+    fontSize: 12,
     fontFamily: "Kreon-Bold",
-    color: "#333",
-    marginRight: 8,
-  },
-  secretBadge: {
-    backgroundColor: "#FFE4D6",
-    borderRadius: 12,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: "#FF6B35",
   },
   
   chatItem: {
@@ -161,20 +1241,6 @@ const styles = StyleSheet.create({
   },
   selectedChatItem: {
     backgroundColor: "#E3F2FD",
-  },
-  lockedChatItem: {
-    backgroundColor: "#FFF5F5",
-    borderLeftWidth: 4,
-    borderLeftColor: "#FF6B35",
-    paddingLeft: 12,
-  },
-  
-  // LOCK ICON
-  lockIcon: {
-    marginRight: 8,
-    backgroundColor: "#FFE4D6",
-    borderRadius: 12,
-    padding: 4,
   },
   
   // SELECTION CIRCLE
@@ -302,936 +1368,4 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontFamily: "Kreon-Bold",
   },
-  
-  // FORGOT PASSWORD STYLES
-  forgotPasswordButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    alignItems: "center",
-  },
-  forgotPasswordText: {
-    fontSize: 14,
-    color: "#FF6B35",
-    fontFamily: "Kreon-Regular",
-    textDecorationLine: "underline",
-  },
-  securityQuestionText: {
-    fontSize: 16,
-    fontFamily: "Kreon-Regular",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 20,
-    padding: 16,
-    backgroundColor: "#F8F9FA",
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: "#007AFF",
-  },
-});import React, { useState, useEffect, useRef, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  Image,
-  StatusBar,
-  Alert,
-  TextInput,
-  Modal,
-  Animated,
-  BackHandler,
-  SectionList,
-} from "react-native";
-import { PanGestureHandler } from "react-native-gesture-handler";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from "../../lib/supabase";
-import { useRouter, useFocusEffect } from "expo-router";
-import * as Contacts from "expo-contacts";
-import LinearGradient from "react-native-linear-gradient";
-import * as SecureStore from "expo-secure-store";
-
-interface Conversation {
-  id: string | number;
-  phoneNumber: string;
-  name: string;
-  profileImage: string;
-  lastMessage: string;
-  time: string;
-  unreadCount: number;
-  status?: "active" | "semiactive" | "offline";
-}
-
-interface SupabaseMessage {
-  id: string | number;
-  sender_phone: string;
-  receiver_phone: string;
-  message: string;
-  created_at: string;
-  is_read: boolean;
-}
-
-interface UserMode {
-  phone_number: string;
-  mode: "active" | "semiactive" | "offline";
-}
-
-interface ChatSection {
-  title: string;
-  data: Conversation[];
-}
-
-export default function ChatsScreen() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [userName, setUserName] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [contactsMap, setContactsMap] = useState<Record<string, string>>({});
-  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const statusSubscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const router = useRouter();
-  const [userStatus, setUserStatus] = useState<"active" | "semiactive" | "offline">("offline");
-  const [lockedChats, setLockedChats] = useState<string[]>([]);
-  const [isUnlocked, setIsUnlocked] = useState(false);
-  const [isSearchActive, setIsSearchActive] = useState(false);
-  
-  // UNLOCK SELECTION MODE STATE
-  const [unlockSelectionMode, setUnlockSelectionMode] = useState(false);
-  const [selectedUnlockChats, setSelectedUnlockChats] = useState<string[]>([]);
-  
-  // LOCK SELECTION MODE STATE
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedChats, setSelectedChats] = useState<string[]>([]);
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState("");
-  const [isSettingPassword, setIsSettingPassword] = useState(false);
-  const [showUnlockModal, setShowUnlockModal] = useState(false);
-  const [unlockPasswordInput, setUnlockPasswordInput] = useState("");
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [contactsLoaded, setContactsLoaded] = useState(false);
-  
-  // FORGOT PASSWORD STATE
-  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
-  const [securityQuestion, setSecurityQuestion] = useState("");
-  const [securityAnswer, setSecurityAnswer] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmNewPassword, setConfirmNewPassword] = useState("");
-  const [isSettingSecurityQuestion, setIsSettingSecurityQuestion] = useState(false);
-  const [forgotPasswordStep, setForgotPasswordStep] = useState<'question' | 'reset'>('question');
-  
-  // Show locked chats in separate section
-  const [showLockedSection, setShowLockedSection] = useState(false);
-  
-  // Swipe gesture for unlock
-  const translateY = useRef(new Animated.Value(0)).current;
-  
-  const normalizePhone = (phone?: string) => phone?.replace(/\D/g, "") || "";
-
-  // Get phone number from AsyncStorage
-  const getPhoneFromStorage = async () => {
-    try {
-      const storedPhone = await AsyncStorage.getItem('senderPhone');
-      return storedPhone ? normalizePhone(storedPhone) : null;
-    } catch (error) {
-      console.error('Error getting phone from AsyncStorage:', error);
-      return null;
-    }
-  };
-
-  const loadContacts = async () => {
-    if (contactsLoaded) return contactsMap;
-    
-    try {
-      const storedContacts = await AsyncStorage.getItem('contactsMap');
-      if (storedContacts) {
-        const parsedContacts = JSON.parse(storedContacts);
-        setContactsMap(parsedContacts);
-        setContactsLoaded(true);
-        return parsedContacts;
-      }
-
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status !== "granted") {
-        setContactsLoaded(true);
-        return {};
-      }
-
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers],
-      });
-
-      const phoneMap: Record<string, string> = {};
-      data.forEach((contact) => {
-        contact.phoneNumbers?.forEach((num) => {
-          const clean = normalizePhone(num.number);
-          if (clean) phoneMap[clean] = contact.name || "";
-        });
-      });
-
-      await AsyncStorage.setItem('contactsMap', JSON.stringify(phoneMap));
-      setContactsMap(phoneMap);
-      setContactsLoaded(true);
-      return phoneMap;
-    } catch (error) {
-      console.error('Error loading contacts:', error);
-      setContactsLoaded(true);
-      return {};
-    }
-  };
-  
-  const getUserProfile = async (senderPhone: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("name")
-        .eq("phone_number", senderPhone)
-        .single();
-
-      if (error) {
-        console.error("Error fetching profile:", error.message);
-      } else if (data) {
-        setUserName(data.name);
-      }
-    } catch (err) {
-      console.error("Unexpected error:", err);
-    }
-  };
-
-  const initializeUserStatus = async (phone: string) => {
-    try {
-      const { data: existingRecord } = await supabase
-        .from("usersmodes")
-        .select("phone")
-        .eq("phone", phone)
-        .single();
-
-      if (!existingRecord) {
-        const { error } = await supabase
-          .from("usersmodes")
-          .insert({ phone: phone, mode: "offline" });
-
-        if (error) {
-          console.error("Error creating initial user status record:", error.message);
-        } else {
-          console.log(`Created initial status record for ${phone} with default mode: offline`);
-          setUserStatus("offline");
-        }
-      } else {
-        await fetchUserStatus(phone);
-      }
-    } catch (error) {
-      console.error("Error in initializeUserStatus:", error);
-      setUserStatus("offline");
-    }
-  };
-
-  const fetchUserStatus = async (phone: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("usersmodes")
-        .select("mode")
-        .eq("phone", phone)
-        .single();
-
-      if (error) {
-        console.error("Error fetching user status:", error.message);
-        setUserStatus("offline");
-      } else {
-        const userData = data as UserMode;
-        const mode = userData?.mode || "offline";
-        setUserStatus(mode);
-      }
-    } catch (error) {
-      console.error("Error in fetchUserStatus:", error);
-      setUserStatus("offline");
-    }
-  };
-
-  const fetchLockedChats = async (phone: string) => {
-    const locked = await getLockedChats(phone);
-    setLockedChats(locked);
-  };
-
-  const subscribeToStatusChanges = (phone: string) => {
-    if (statusSubscriptionRef.current) {
-      supabase.removeChannel(statusSubscriptionRef.current);
-    }
-
-    const channel = supabase.channel("usersmodes-realtime");
-
-    channel.on(
-      "postgres_changes",
-      { 
-        event: "*", 
-        schema: "public", 
-        table: "usersmodes",
-        filter: `phone_number=eq.${phone}`
-      },
-      (payload) => {
-        if (payload.new && (payload.new as UserMode).mode) {
-          setUserStatus((payload.new as UserMode).mode);
-        }
-      }
-    );
-
-    channel.subscribe();
-    statusSubscriptionRef.current = channel;
-  };
-
-  const fetchUserAndContacts = useCallback(async () => {
-    if (isInitialized) return;
-    
-    const contacts = await loadContacts();
-  
-    const storedPhone = await getPhoneFromStorage();
-    
-    if (storedPhone) {
-      setPhoneNumber(storedPhone);
-      await initializeUserStatus(storedPhone);
-      subscribeToStatusChanges(storedPhone);
-      await fetchConversations(storedPhone);
-      subscribeToMessages(storedPhone);
-      await fetchLockedChats(storedPhone);
-      setIsInitialized(true);
-    } else {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data } = await supabase
-        .from("profiles")
-        .select("name, phone_number")
-        .eq("user_id", user.id)
-        .single();
-
-      const phone = normalizePhone(data?.phone_number);
-      setUserName(data?.name || "User");
-      
-      if (phone) {
-        setPhoneNumber(phone);
-        await AsyncStorage.setItem('senderPhone', phone);
-        await initializeUserStatus(phone);
-        subscribeToStatusChanges(phone);
-        await fetchConversations(phone);
-        subscribeToMessages(phone);
-        await fetchLockedChats(phone);
-        setIsInitialized(true);
-      }
-    }
-  }, [isInitialized]);
-
-  // UNLOCK SELECTION FUNCTIONS
-  const toggleUnlockSelectionMode = () => {
-    setUnlockSelectionMode(!unlockSelectionMode);
-    setSelectedUnlockChats([]);
-    setShowLockedSection(true);
-  };
-
-  const exitUnlockSelectionMode = () => {
-    setUnlockSelectionMode(false);
-    setSelectedUnlockChats([]);
-    setShowLockedSection(false);
-  };
-
-  const toggleUnlockChatSelection = (phoneNumber: string) => {
-    const normalizedPhone = normalizePhone(phoneNumber);
-    setSelectedUnlockChats(prev => 
-      prev.includes(normalizedPhone) 
-        ? prev.filter(p => p !== normalizedPhone)
-        : [...prev, normalizedPhone]
-    );
-  };
-
-  const handleUnlockSelectedChats = async () => {
-    if (selectedUnlockChats.length === 0) {
-      Alert.alert("No Selection", "Please select chats to unlock");
-      return;
-    }
-
-    try {
-      for (const chatPhone of selectedUnlockChats) {
-        await unlockChat(phoneNumber, chatPhone);
-      }
-      
-      setLockedChats(prev => prev.filter(phone => !selectedUnlockChats.includes(phone)));
-      setSelectedUnlockChats([]);
-      setUnlockSelectionMode(false);
-      setShowLockedSection(false);
-      
-      Alert.alert("Chats Unlocked", `${selectedUnlockChats.length} chat(s) have been unlocked`);
-    } catch (error) {
-      console.error("Error unlocking chats:", error);
-      Alert.alert("Error", "Failed to unlock chats");
-    }
-  };
-
-  const fetchConversations = async (currentUserPhone: string) => {
-    const { data: messages } = await supabase
-      .from("messages")
-      .select("*")
-      .or(`sender_phone.eq.${currentUserPhone},receiver_phone.eq.${currentUserPhone}`)
-      .order("created_at", { ascending: false });
-
-    const latestMap = new Map<string, SupabaseMessage>();
-    const unreadMap: Record<string, number> = {};
-
-    messages?.forEach((msg) => {
-      const partner =
-        msg.sender_phone === currentUserPhone ? msg.receiver_phone : msg.sender_phone;
-      const clean = normalizePhone(partner);
-
-      if (!latestMap.has(clean)) latestMap.set(clean, msg);
-
-      if (msg.receiver_phone === currentUserPhone && !msg.is_read) {
-        unreadMap[clean] = (unreadMap[clean] || 0) + 1;
-      }
-    });
-
-    const partnerPhones = Array.from(latestMap.keys());
-    const { data: partners } = await supabase
-      .from("profiles")
-      .select("phone_number, profile_picture")
-      .in("phone_number", partnerPhones);
-
-    const result: Conversation[] = partnerPhones.map((phone) => {
-      const msg = latestMap.get(phone)!;
-      const partner = partners?.find(
-        (p) => normalizePhone(p.phone_number) === phone
-      );
-
-      const randomStatus = ["active", "semiactive", "offline"][
-        Math.floor(Math.random() * 3)
-      ] as "active" | "semiactive" | "offline";
-
-      return {
-        id: msg.id,
-        phoneNumber: phone,
-        name: contactsMap[phone] || phone,
-        profileImage: partner?.profile_picture || "",
-        lastMessage: msg.message,
-        time: new Date(msg.created_at).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        unreadCount: unreadMap[phone] || 0,
-        status: randomStatus,
-      };
-    });
-
-    setConversations(result);
-  };
-
-  // LOCK/UNLOCK FUNCTIONS
-  const LOCK_KEY = "chatlock_password";
-  const SECURITY_QUESTION_KEY = "security_question";
-  const SECURITY_ANSWER_KEY = "security_answer";
-  
-  const saveLockPassword = async (phoneNumber: string, password: string) => {
-    await SecureStore.setItemAsync(LOCK_KEY, password);
-    
-    const { error } = await supabase
-      .from("profiles")
-      .update({ lock_password: password })
-      .eq("phone_number", phoneNumber);
-
-    if (error) {
-      console.error("Failed to save lock password to Supabase:", error.message);
-    }
-  };
-
-  const saveSecurityQuestion = async (phoneNumber: string, question: string, answer: string) => {
-    await SecureStore.setItemAsync(SECURITY_QUESTION_KEY, question);
-    await SecureStore.setItemAsync(SECURITY_ANSWER_KEY, answer);
-    
-    const { error } = await supabase
-      .from("profiles")
-      .update({ 
-        security_question: question,
-        security_answer: answer 
-      })
-      .eq("phone_number", phoneNumber);
-
-    if (error) {
-      console.error("Failed to save security question to Supabase:", error.message);
-    }
-  };
-
-  const getSecurityQuestion = async (phoneNumber: string) => {
-    const localQuestion = await SecureStore.getItemAsync(SECURITY_QUESTION_KEY);
-    if (localQuestion) return localQuestion;
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("security_question")
-      .eq("phone_number", phoneNumber)
-      .single();
-
-    if (error) {
-      console.error("Error fetching security question:", error.message);
-      return null;
-    }
-
-    return data?.security_question || null;
-  };
-
-  const verifySecurityAnswer = async (phoneNumber: string, inputAnswer: string) => {
-    const localAnswer = await SecureStore.getItemAsync(SECURITY_ANSWER_KEY);
-    if (localAnswer) {
-      return localAnswer.toLowerCase() === inputAnswer.toLowerCase();
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("security_answer")
-      .eq("phone_number", phoneNumber)
-      .single();
-
-    if (error) {
-      console.error("Error fetching security answer:", error.message);
-      return false;
-    }
-
-    return data?.security_answer?.toLowerCase() === inputAnswer.toLowerCase();
-  };
-  
-  const getLocalLockPassword = async () => {
-    return await SecureStore.getItemAsync(LOCK_KEY);
-  };
-
-  const getLockedChats = async (userPhone: string): Promise<string[]> => {
-    const { data, error } = await supabase
-      .from("chatlock")
-      .select("chat_phone")
-      .eq("user_phone", userPhone);
-
-    if (error) {
-      console.error("Failed to fetch locked chats:", error.message);
-      return [];
-    }
-
-    return data.map((row) => row.chat_phone);
-  };
-
-  const getSupabaseLockPassword = async (phoneNumber: string) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("lock_password")
-      .eq("phone_number", phoneNumber)
-      .single();
-
-    if (error) {
-      console.error("Error fetching lock password from Supabase:", error.message);
-      return null;
-    }
-
-    return data?.lock_password || null;
-  };
-
-  const lockChat = async (userPhone: string, chatPhone: string) => {
-    const { error } = await supabase
-      .from("chatlock")
-      .upsert([{ user_phone: userPhone, chat_phone: chatPhone }]);
-
-    if (error) {
-      console.error("Failed to lock chat:", error.message);
-      return false;
-    }
-
-    return true;
-  };
-
-  const unlockChat = async (userPhone: string, chatPhone: string) => {
-    const { error } = await supabase
-      .from("chatlock")
-      .delete()
-      .eq("user_phone", userPhone)
-      .eq("chat_phone", chatPhone);
-
-    if (error) {
-      console.error("Failed to unlock chat:", error.message);
-      return false;
-    }
-
-    return true;
-  };
-
-  // SELECTION MODE FUNCTIONS
-  const toggleSelectionMode = () => {
-    setSelectionMode(!selectionMode);
-    setSelectedChats([]);
-  };
-
-  const exitSelectionMode = () => {
-    setSelectionMode(false);
-    setSelectedChats([]);
-  };
-
-  const toggleChatSelection = (phoneNumber: string) => {
-    const normalizedPhone = normalizePhone(phoneNumber);
-    setSelectedChats(prev => 
-      prev.includes(normalizedPhone) 
-        ? prev.filter(p => p !== normalizedPhone)
-        : [...prev, normalizedPhone]
-    );
-  };
-
-  const checkPasswordExists = async () => {
-    const localPassword = await getLocalLockPassword();
-    const supabasePassword = await getSupabaseLockPassword(phoneNumber);
-    return localPassword || supabasePassword;
-  };
-
-  const handleLockSelectedChats = async () => {
-    if (selectedChats.length === 0) {
-      Alert.alert("No Selection", "Please select chats to lock");
-      return;
-    }
-
-    const passwordExists = await checkPasswordExists();
-    
-    if (!passwordExists) {
-      setIsSettingPassword(true);
-      setIsSettingSecurityQuestion(true);
-      setShowPasswordModal(true);
-    } else {
-      setIsSettingPassword(false);
-      setIsSettingSecurityQuestion(false);
-      setShowPasswordModal(true);
-    }
-  };
-
-  const handlePasswordSubmit = async () => {
-    if (isSettingPassword) {
-      if (passwordInput.length < 4) {
-        Alert.alert("Password Too Short", "Password must be at least 4 characters");
-        return;
-      }
-      
-      if (passwordInput !== confirmPasswordInput) {
-        Alert.alert("Password Mismatch", "Passwords don't match");
-        return;
-      }
-
-      if (isSettingSecurityQuestion) {
-        if (!securityQuestion || !securityAnswer) {
-          Alert.alert("Incomplete", "Please provide both security question and answer");
-          return;
-        }
-        await saveSecurityQuestion(phoneNumber, securityQuestion, securityAnswer);
-      }
-
-      await saveLockPassword(phoneNumber, passwordInput);
-      await lockSelectedChats();
-    } else {
-      const storedPassword = await getLocalLockPassword() || await getSupabaseLockPassword(phoneNumber);
-      
-      if (passwordInput === storedPassword) {
-        await lockSelectedChats();
-      } else {
-        Alert.alert("Wrong Password", "Please enter the correct password");
-        return;
-      }
-    }
-
-    setShowPasswordModal(false);
-    setPasswordInput("");
-    setConfirmPasswordInput("");
-    setSecurityQuestion("");
-    setSecurityAnswer("");
-  };
-
-  const lockSelectedChats = async () => {
-    try {
-      for (const chatPhone of selectedChats) {
-        await lockChat(phoneNumber, chatPhone);
-      }
-      
-      setLockedChats(prev => [...prev, ...selectedChats]);
-      setSelectedChats([]);
-      setSelectionMode(false);
-      
-      Alert.alert("Chats Locked", `${selectedChats.length} chat(s) have been locked`);
-    } catch (error) {
-      console.error("Error locking chats:", error);
-      Alert.alert("Error", "Failed to lock chats");
-    }
-  };
-
-  // ACCESS LOCKED CHATS
-  const handleAccessLockedChats = () => {
-    setShowLockedSection(true);
-  };
-
-  const handleUnlockRequest = async () => {
-    const passwordExists = await checkPasswordExists();
-    
-    if (!passwordExists) {
-      Alert.alert("No Password Set", "You haven't set a lock password yet");
-      return;
-    }
-    
-    setShowUnlockModal(true);
-  };
-
-  const handleUnlockVerification = async () => {
-    const storedPassword = await getLocalLockPassword() || await getSupabaseLockPassword(phoneNumber);
-    
-    if (unlockPasswordInput === storedPassword) {
-      setIsUnlocked(true);
-      setShowUnlockModal(false);
-      setUnlockPasswordInput("");
-      setShowLockedSection(true);
-      
-      setTimeout(() => {
-        setIsUnlocked(false);
-        setShowLockedSection(false);
-      }, 30000);
-      
-      Alert.alert("Unlocked", "Locked chats are now visible for 30 seconds");
-    } else {
-      Alert.alert("Wrong Password", "Please enter the correct password");
-    }
-  };
-
-  // FORGOT PASSWORD FUNCTIONS
-  const handleForgotPassword = async () => {
-    const question = await getSecurityQuestion(phoneNumber);
-    if (!question) {
-      Alert.alert("No Security Question", "You haven't set up a security question for password recovery");
-      return;
-    }
-    
-    setSecurityQuestion(question);
-    setForgotPasswordStep('question');
-    setShowForgotPasswordModal(true);
-    setShowUnlockModal(false);
-  };
-
-  const handleSecurityAnswerSubmit = async () => {
-    const isCorrect = await verifySecurityAnswer(phoneNumber, securityAnswer);
-    if (isCorrect) {
-      setForgotPasswordStep('reset');
-    } else {
-      Alert.alert("Wrong Answer", "Security answer is incorrect");
-    }
-  };
-
-  const handlePasswordReset = async () => {
-    if (newPassword.length < 4) {
-      Alert.alert("Password Too Short", "Password must be at least 4 characters");
-      return;
-    }
-    
-    if (newPassword !== confirmNewPassword) {
-      Alert.alert("Password Mismatch", "Passwords don't match");
-      return;
-    }
-
-    await saveLockPassword(phoneNumber, newPassword);
-    
-    setShowForgotPasswordModal(false);
-    setSecurityAnswer("");
-    setNewPassword("");
-    setConfirmNewPassword("");
-    
-    Alert.alert("Password Reset", "Your password has been reset successfully");
-  };
-
-  const onGestureEvent = Animated.event(
-    [{ nativeEvent: { translationY: translateY } }],
-    { useNativeDriver: false }
-  );
-
-  const onHandlerStateChange = (event: any) => {
-    if (event.nativeEvent.state === 5) {
-      if (event.nativeEvent.translationY > 50) {
-        handleUnlockRequest();
-      }
-      Animated.spring(translateY, {
-        toValue: 0,
-        useNativeDriver: false,
-      }).start();
-    }
-  };
-
-  const markMessagesAsRead = async (partnerPhone: string) => {
-    setConversations((prev) =>
-      prev.map((c) =>
-        normalizePhone(c.phoneNumber) === normalizePhone(partnerPhone)
-          ? { ...c, unreadCount: 0 }
-          : c
-      )
-    );
-
-    await supabase
-      .from("messages")
-      .update({ is_read: true })
-      .eq("sender_phone", partnerPhone)
-      .eq("receiver_phone", phoneNumber)
-      .eq("is_read", false);
-  };
-
-  const subscribeToMessages = (currentUserPhone: string) => {
-    if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
-
-    const channel = supabase.channel("messages-realtime");
-
-    channel.on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "messages" },
-      async (payload) => {
-        const newMsg = payload.new as SupabaseMessage;
-        if (
-          newMsg.sender_phone !== currentUserPhone &&
-          newMsg.receiver_phone !== currentUserPhone
-        )
-          return;
-
-        const partner =
-          newMsg.sender_phone === currentUserPhone
-            ? newMsg.receiver_phone
-            : newMsg.sender_phone;
-        const clean = normalizePhone(partner);
-
-        const existing = conversations.find(
-          (c) => normalizePhone(c.phoneNumber) === clean
-        );
-
-        let profileImage = existing?.profileImage || "";
-        if (!existing) {
-          const { data: partnerData } = await supabase
-            .from("profiles")
-            .select("profile_picture")
-            .eq("phone_number", partner)
-            .single();
-          profileImage = partnerData?.profile_picture || "";
-        }
-
-        const unreadCount =
-          newMsg.receiver_phone === currentUserPhone && !newMsg.is_read
-            ? (existing?.unreadCount || 0) + 1
-            : existing?.unreadCount || 0;
-
-        const updatedConv: Conversation = {
-          id: newMsg.id,
-          phoneNumber: partner,
-          name: contactsMap[clean] || partner,
-          profileImage,
-          lastMessage: newMsg.message,
-          time: new Date(newMsg.created_at).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          unreadCount,
-          status: existing?.status || "offline",
-        };
-
-        setConversations((prev) => [
-          updatedConv,
-          ...prev.filter((c) => normalizePhone(c.phoneNumber) !== clean),
-        ]);
-      }
-    );
-
-    channel.subscribe();
-    subscriptionRef.current = channel;
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      if (phoneNumber && contactsLoaded && isInitialized) {
-        fetchConversations(phoneNumber);
-      }
-    }, [phoneNumber, contactsLoaded, isInitialized])
-  );
-
-  useEffect(() => {
-    if (phoneNumber) {
-      getUserProfile(phoneNumber);
-    }
-  }, [phoneNumber]);
-
-  useEffect(() => {
-    fetchUserAndContacts();
-    
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
-    
-    return () => {
-      if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
-      if (statusSubscriptionRef.current) supabase.removeChannel(statusSubscriptionRef.current);
-      backHandler.remove();
-    };
-  }, [fetchUserAndContacts, selectionMode]);
-
-  const getNextStatus = (currentStatus: "active" | "semiactive" | "offline") => {
-    switch (currentStatus) {
-      case "active": return "semiactive";
-      case "semiactive": return "offline";
-      case "offline": return "active";
-      default: return "active";
-    }
-  };
-
-  const toggleUserStatus = async () => {
-    if (!phoneNumber) {
-      console.log("No phone number available");
-      return;
-    }
-
-    const newStatus = getNextStatus(userStatus);
-    setUserStatus(newStatus);
-
-    try {
-      const { error } = await supabase
-        .from("usersmodes")
-        .update({ mode: newStatus })
-        .eq("phone", phoneNumber);
-
-      if (error) {
-        console.error("Failed to update status:", error.message);
-        setUserStatus(userStatus);
-      } else {
-        console.log(`Status updated to: ${newStatus}`);
-      }
-    } catch (error) {
-      console.error("Error updating status:", error);
-      setUserStatus(userStatus);
-    }
-  };
-
-  const getStatusDotStyle = (status: "active" | "semiactive" | "offline") => {
-    switch (status) {
-      case "active": return styles.activeDot;
-      case "semiactive": return styles.semiactiveDot;
-      case "offline": return styles.offlineDot;
-      default: return styles.offlineDot;
-    }
-  };
-
-  const handleOpenChat = (phone: string) => {
-    if (selectionMode) {
-      toggleChatSelection(phone);
-      return;
-    }
-    
-    if (unlockSelectionMode) {
-      toggleUnlockChatSelection(phone);
-      return;
-    }
-    
-    markMessagesAsRead(phone);
-    router.push(`/chats/${phone}`);
-  };
-
-  const handleBackPress = () => {
-    if (selectionMode) {
-      exitSelectionMode();
-      return true;
-    }
-    if (unlockSelectionMode) {
-      exitUnlockSelectionMode();
-      return true;
-    }}}
+});
