@@ -634,7 +634,7 @@ useEffect(() => {
 }, [showForwardModal]);
   const handleAI = async (query: string): Promise<string> => {
     try {
-      const resp = await axios.post("https://fabc3f159498.ngrok-free.app/ask-ai", {
+      const resp = await axios.post("https://e763ecf5a4cb.ngrok-free.app/ask-ai", {
         query,
         sender_phone: senderPhone,
         receiver_phone: receiverPhone,
@@ -711,7 +711,7 @@ useEffect(() => {
       if (!privacyMode && text.startsWith("/ai ")) {
         const query = text.slice(4).trim();
         try {
-          const resp = await axios.post("https://5c3ab0c71bc2.ngrok-free.app/ask-ai", {
+          const resp = await axios.post("https://e763ecf5a4cb.ngrok-free.app/ask-ai", {
             query,
             sender_phone: senderPhone,
             receiver_phone: receiverPhone,
