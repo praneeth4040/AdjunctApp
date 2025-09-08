@@ -1033,7 +1033,7 @@ useEffect(() => {
     <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }, themeStyles.safeArea]}>
       <KeyboardAvoidingView
         style={[styles.container, themeStyles.container]}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         {/* Header */}
@@ -1144,7 +1144,7 @@ useEffect(() => {
           </TouchableOpacity>
           
           <TextInput
-            placeholder={recording ? "Recording..." : "Type a message or tap 📎 for media..."}
+            placeholder={recording ? "Recording..." : "Type a message..."}
             placeholderTextColor={privacyMode ? '#bbb' : '#999'}
             style={[styles.input, themeStyles.input]}
             value={input}
