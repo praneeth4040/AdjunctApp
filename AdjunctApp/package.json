@@ -21,7 +21,7 @@
     "axios": "^1.11.0",
     "base-64": "^1.0.0",
     "crypto-js": "^4.2.0",
-    "expo": "53.0.22",
+    "expo": "^54.0.3",
     "expo-audio": "~0.4.9",
     "expo-auth-session": "^6.2.1",
     "expo-av": "~15.1.7",
@@ -44,6 +44,7 @@
     "expo-router": "~5.1.5",
     "expo-secure-store": "~14.2.4",
     "expo-splash-screen": "~0.30.10",
+    "expo-sqlite": "~15.2.14",
     "expo-status-bar": "~2.2.3",
     "expo-symbols": "~0.4.5",
     "expo-system-ui": "~5.0.11",
@@ -64,14 +65,17 @@
     "react-native-screens": "~4.11.1",
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5",
+    "simple-swizzle": "^0.2.2",
     "tweetnacl": "^1.0.3",
-    "tweetnacl-util": "^0.15.1"
+    "tweetnacl-util": "^0.15.1",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/crypto-js": "^4.2.2",
     "@types/json-schema": "^7.0.15",
     "@types/react": "~19.0.10",
+    "@types/uuid": "^10.0.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~9.2.0",
     "typescript": "~5.8.3"

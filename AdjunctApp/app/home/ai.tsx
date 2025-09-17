@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import axios from 'axios';
+import { insertLocal,fetchLocal } from '@/library/database';
+import { v4 as uuidv4 } from 'uuid';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Get screen dimensions
@@ -88,18 +90,28 @@ const AIMessagingApp: React.FC = () => {
     }
   };
 
-  const insertMessage = async (
-    text: string,
-    sender: 'user' | 'ai'
-  ) => {
-    const { error } = await supabase.from('chatbotmessages').insert({
-      text,
-      sender_phone: userPhone,
-      is_ai: sender === 'ai',
-    });
+  const insertMessage = async (text: string, sender: 'user' | 'ai') => {
+    try {
+      // Insert into local SQLite
+      await insertLocal('chatbotmessages', {
+        id: uuidv4(),
+        text,
+        sender_phone: userPhone,
+        is_ai: sender === 'ai' ? 1 : 0,
+        created_at: new Date().toISOString()
+      });
+      console.log("data from the local")
   
-    if (error) {
-      console.error('Insert error:', error.message);
+      // Also sync to Supabase
+      const { error } = await supabase.from('chatbotmessages').insert({
+        text,
+        sender_phone: userPhone,
+        is_ai: sender === 'ai',
+      });
+      
+      if (error) console.error('Supabase sync error:', error.message);
+    } catch (error) {
+      console.error('Insert message error:', error);
     }
   };
   
@@ -190,69 +202,61 @@ const AIMessagingApp: React.FC = () => {
   const fetchMessages = async () => {
     if (!userPhone) return;
   
-    const { data, error } = await supabase
-      .from('chatbotmessages')
-      .select('*')
-      .eq('sender_phone', userPhone)
-      .order('created_at', { ascending: true });
-  
-    if (error) {
-      console.error('Fetch messages error:', error.message);
-      return;
-    }
-  
-    if (data) {
-      const formatted = data
-        .filter(msg => msg.created_at && msg.text !== undefined)
-        .map(msg => {
-          const createdAt = new Date(msg.created_at);
-          return {
-            id: createdAt.getTime() || Date.now(),
-            text: msg.text,
-            sender: (msg.is_ai ? 'ai' : 'user') as 'ai' | 'user',
-            timestamp: createdAt
-          };
-        });
-  
-      setMessages(formatted);
+    try {
+      // Fetch from local SQLite first
+      const localMessages = await fetchLocal('chatbotmessages');
+      
+      const userMessages = localMessages.filter(msg => msg.sender_phone === userPhone);
+      
+      if (userMessages.length > 0) {
+        const formatted = userMessages.map(msg => ({
+          id: msg.id,
+          text: msg.text,
+          sender: (msg.is_ai ? 'ai' : 'user') as 'ai' | 'user',
+          timestamp: new Date(msg.created_at)
+        }));
+        
+        setMessages(formatted);
+      }
+    } catch (error) {
+      console.error('Fetch messages error:', error);
     }
   };
 
   const fetchRecentActions = async () => {
     setLoading(true);
-
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .or(`sender_phone.eq.${userPhone},is_ai.eq.true`)
-      .order('created_at', { ascending: false })
-      .limit(50);
   
-    if (error) {
-      console.error(error.message);
+    try {
+      // Get from local messages table
+      const localMessages = await fetchLocal('messages');
+      const relevantMessages = localMessages
+        .filter(msg => msg.sender_phone === userPhone || msg.is_ai === 1)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 50);
+  
+      const pairs: ActionPair[] = [];
+      let lastUserMessage: any = null;
+  
+      relevantMessages.reverse().forEach((msg) => {
+        if (!msg.is_ai) {
+          lastUserMessage = msg;
+        } else if (msg.is_ai && lastUserMessage) {
+          pairs.push({
+            id: msg.id,
+            userText: lastUserMessage.message,
+            aiText: msg.message,
+            createdAt: msg.created_at,
+          });
+          lastUserMessage = null;
+        }
+      });
+  
+      setRecentActions(pairs.reverse());
+    } catch (error) {
+      console.error('Fetch recent actions error:', error);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const pairs: ActionPair[] = [];
-    let lastUserMessage: any = null;
-
-    data.reverse().forEach((msg) => {
-      if (!msg.is_ai) {
-        lastUserMessage = msg;
-      } else if (msg.is_ai && lastUserMessage) {
-        pairs.push({
-          id: msg.id,
-          userText: lastUserMessage.message,
-          aiText: msg.message,
-          createdAt: msg.created_at,
-        });
-        lastUserMessage = null;
-      }
-    });
-
-    setRecentActions(pairs.reverse());
-    setLoading(false);
   };
   
   const formatTime = (date: string | Date): string => {

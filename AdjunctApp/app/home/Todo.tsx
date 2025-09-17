@@ -67,6 +67,7 @@ const Todo = () => {
 
   const fetchTasks = async (phone: string) => {
     try {
+      
       const { data, error } = await supabase
         .from("todos")
         .select("*")

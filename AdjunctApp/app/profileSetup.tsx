@@ -146,7 +146,7 @@ export default function ProfileSetup() {
       if (updateError) throw updateError;
 
       Alert.alert('Success', 'Profile created successfully!', [
-        { text: 'Continue', onPress: () => router.replace('/home/chats') }
+        { text: 'Continue', onPress: () => router.replace('/aisetup') }
       ]);
 
     } catch (err: any) {
