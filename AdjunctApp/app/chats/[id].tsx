@@ -578,7 +578,13 @@ const [contactSearch, setContactSearch] = useState("");
             );
             onMessagesRead?.(receiverPhone);
           }
-      
+          if (newMsg.sender_phone === receiverPhone) {
+            await updateConversationAfterSending(
+              senderPhone, 
+              receiverPhone, 
+              decrypted.message || "New message"
+            );
+          }
           try {
             const { data: modeRow } = await supabase
               .from("usersmodes")
@@ -634,7 +640,7 @@ useEffect(() => {
 }, [showForwardModal]);
   const handleAI = async (query: string): Promise<string> => {
     try {
-      const resp = await axios.post("https://fabc3f159498.ngrok-free.app/ask-ai", {
+      const resp = await axios.post("https://e763ecf5a4cb.ngrok-free.app/ask-ai", {
         query,
         sender_phone: senderPhone,
         receiver_phone: receiverPhone,
@@ -661,6 +667,7 @@ useEffect(() => {
         console.error("Supabase insert error:", error);
       } else {
         console.log("AI message inserted:", data);
+        await updateConversationAfterSending(receiverPhone, senderPhone, reply);
       }
   
       return reply;
@@ -708,10 +715,11 @@ useEffect(() => {
 
       if (error) throw error;
 
+      await updateConversationAfterSending(senderPhone, receiverPhone, privacyMode ? "🔒 Encrypted message" : text);
       if (!privacyMode && text.startsWith("/ai ")) {
         const query = text.slice(4).trim();
         try {
-          const resp = await axios.post("https://5c3ab0c71bc2.ngrok-free.app/ask-ai", {
+          const resp = await axios.post("https://e763ecf5a4cb.ngrok-free.app/ask-ai", {
             query,
             sender_phone: senderPhone,
             receiver_phone: receiverPhone,
@@ -728,6 +736,7 @@ useEffect(() => {
             mode: "compatibility",
             is_read: false,
           });
+          await updateConversationAfterSending(senderPhone, receiverPhone, aiReply);
         } catch (aiErr: any) {
           console.error("AI request failed:", aiErr);
           await supabase.from("messages").insert({
@@ -739,6 +748,7 @@ useEffect(() => {
             mode: "compatibility",
             is_read: false,
           });
+          await updateConversationAfterSending(senderPhone, receiverPhone, aiErr);
         }
       }
 
@@ -751,6 +761,64 @@ useEffect(() => {
     }
   };
 
+  const updateConversationAfterSending = async (
+    userPhone: string,
+    contactPhone: string,
+    lastMessage: string
+  ) => {
+    try {
+      const now = new Date().toISOString();
+      
+      // Check if conversation exists
+      const { data: existing } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_phone', userPhone)
+        .eq('contact_phone', contactPhone)
+        .single();
+      
+      if (existing) {
+        // Update existing conversation
+        const { error } = await supabase
+          .from('conversations')
+          .update({
+            last_message: lastMessage,
+            last_message_time: now,
+            updated_at: now
+            // Don't update unread_count for outgoing messages
+          })
+          .eq('id', existing.id);
+          
+        if (error) {
+          console.error('Error updating conversation:', error);
+        } else {
+          console.log('✅ Conversation updated successfully');
+        }
+      } else {
+        // Create new conversation
+        const { error } = await supabase
+          .from('conversations')
+          .insert({
+            user_phone: userPhone,
+            contact_phone: contactPhone,
+            contact_name: contactPhone, // You might want to get the actual name from contacts
+            last_message: lastMessage,
+            last_message_time: now,
+            unread_count: 0, // 0 for outgoing messages
+          });
+          
+        if (error) {
+          console.error('Error creating conversation:', error);
+        } else {
+          console.log('✅ New conversation created successfully');
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error in updateConversationAfterSending:', error);
+    }
+  };
+  
   const handleMultimedia = () => {
     const options = [
       {
@@ -1088,7 +1156,7 @@ useEffect(() => {
         style={[styles.privacyToggleBtn, { backgroundColor: privacyMode ? '#4caf50' : '#d32f2f' }]}
       >
         <Text style={styles.privacyToggleText}>
-          {privacyMode ? '🔒 Privacy' : '📱 Standard'}
+          {privacyMode ? 'Privacy' : 'Standard'}
         </Text>
       </TouchableOpacity>
     </>
@@ -1300,25 +1368,26 @@ useEffect(() => {
 
 // --- Enhanced Styles ---
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  container: { flex: 1, paddingHorizontal: 12 },
+  safeArea: { flex: 1, backgroundColor: "#dcd0a8" },
+  container: { flex: 1, paddingHorizontal: 12, backgroundColor: "#dcd0a8" },
   
   header: {
     paddingVertical: 16,
-    paddingHorizontal: 4,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 0.5,
-    borderColor: "#e0e0e0",
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    paddingHorizontal: 0,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    width: "100%",          // Full width
+    backgroundColor: "#dcd0a8", // Beige background
+    borderBottomWidth: 0.5, // keep or remove depending on look
+    borderBottomColor: "#C4B896",
+    // ❌ Remove shadows if you don’t want box look
+    elevation: 0,
+    shadowColor: "transparent",
   },
-  titleContainer: { flex: 1, alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 18, fontFamily: "Kreon-Bold", fontWeight: '600' },
+  
+  titleContainer: { flex: 1, alignItems: "center", justifyContent: "center", width:"100%" },
+  title: { fontSize: 18, fontFamily: "Kreon-Bold", fontWeight: '600', color: "#000" },
   privacyToggleBtn: { 
     paddingVertical: 8, 
     paddingHorizontal: 12, 
@@ -1328,6 +1397,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 2,
+    backgroundColor: "#007AFF", // Keep blue for toggle
   },
   privacyToggleText: { color: '#fff', fontWeight: 'bold', fontSize: 11 },
   
@@ -1344,13 +1414,13 @@ const styles = StyleSheet.create({
   },
   myWrapper: { 
     alignSelf: "flex-end", 
-    backgroundColor: "#DCF8C6", 
+    backgroundColor: "#F0E68C", // Warmer khaki color matching theme
     borderBottomRightRadius: 4,
     marginLeft: 50,
   },
   theirWrapper: { 
     alignSelf: "flex-start", 
-    backgroundColor: "#FFFFFF", 
+    backgroundColor: "#F5F5DC", // Beige color matching theme
     borderBottomLeftRadius: 4,
     marginRight: 50,
   },
@@ -1358,7 +1428,7 @@ const styles = StyleSheet.create({
   theirMsg: { fontFamily: "Kreon-Regular", color: "#000", fontSize: 16, lineHeight: 20 },
   
   botMsg: { 
-    backgroundColor: '#E3F2FD', 
+    backgroundColor: '#E9E9E9', // Match the chats section background
     padding: 12, 
     borderRadius: 16,
     elevation: 2,
@@ -1372,7 +1442,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic', 
     textAlign: 'center', 
     fontSize: 15, 
-    color: '#1976D2' 
+    color: '#555' // Darker color for better contrast
   },
   
   timeText: { 
@@ -1383,17 +1453,17 @@ const styles = StyleSheet.create({
     fontFamily: "Kreon-Regular"
   },
   
-  replyMsgContainer: { borderLeftWidth: 3, borderLeftColor: '#2196F3', paddingLeft: 8 },
+  replyMsgContainer: { borderLeftWidth: 3, borderLeftColor: '#007AFF', paddingLeft: 8 },
   replyToContainer: { 
-    backgroundColor: '#f0f8ff', 
+    backgroundColor: '#F0F0F0', // Neutral color matching theme
     paddingHorizontal: 8, 
     paddingVertical: 6, 
     borderRadius: 8, 
     marginBottom: 6,
     borderLeftWidth: 3,
-    borderLeftColor: '#2196F3'
+    borderLeftColor: '#007AFF'
   },
-  replyToText: { color: '#2196F3', fontStyle: 'italic', fontSize: 12, fontFamily: "Kreon-Regular" },
+  replyToText: { color: '#007AFF', fontStyle: 'italic', fontSize: 12, fontFamily: "Kreon-Regular" },
   
   backButton: { 
     width: 44, 
@@ -1402,12 +1472,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 22,
   },
-  backButtonText: { fontSize: 24, fontFamily: "Kreon-Bold", fontWeight: '600' },
+  backButtonText: { fontSize: 24, fontFamily: "Kreon-Bold", fontWeight: '600', color: "#000" },
   
   replyBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E8F4FD',
+    backgroundColor: '#E9E9E9', // Match chats background
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
@@ -1420,7 +1490,7 @@ const styles = StyleSheet.create({
   },
   replyBannerContent: { flex: 1, marginRight: 12 },
   replyBannerLabel: { 
-    color: '#1976D2', 
+    color: '#007AFF', 
     fontSize: 12, 
     fontFamily: "Kreon-Bold", 
     fontWeight: '600',
@@ -1436,7 +1506,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#FF5252',
+    backgroundColor: '#FF6B35', // Orange color from chats theme
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1449,7 +1519,7 @@ const styles = StyleSheet.create({
   uploadingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#E9E9E9',
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
@@ -1464,7 +1534,7 @@ const styles = StyleSheet.create({
   recordingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFEBEE',
+    backgroundColor: '#F0E68C', // Warm color matching theme
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
@@ -1474,11 +1544,11 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#F44336',
+    backgroundColor: '#FF6B35', // Orange from chats theme
     marginRight: 8,
   },
   recordingText: {
-    color: '#D32F2F',
+    color: '#B8860B', // Dark goldenrod matching warm theme
     fontFamily: "Kreon-Bold",
     fontSize: 14,
     fontWeight: '600',
@@ -1496,13 +1566,14 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     padding: 8,
     borderTopWidth: 0.5,
-    borderColor: "#e0e0e0",
+    borderColor: "#C4B896",
     marginBottom: 4,
     gap: 8,
+    backgroundColor: "#dcd0a8",
   },
   
   mediaButton: {
-    backgroundColor: "#F0F0F0",
+    backgroundColor: "#E9E9E9",
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -1514,7 +1585,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  mediaIcon: { fontSize: 20, transform: [{ rotate: '45deg' }] },
+  mediaIcon: { fontSize: 20, transform: [{ rotate: '45deg' }], color: "#666" },
   
   input: {
     flex: 1,
@@ -1526,10 +1597,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     maxHeight: 100,
     textAlignVertical: 'center',
+    backgroundColor: "#F5F5DC",
+    borderColor: "#C4B896",
+    color: "#000",
   },
   
   sendButton: {
-    backgroundColor: "#4CAF50",
+    backgroundColor: "#34C759", // Green from chats theme
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -1548,7 +1622,7 @@ const styles = StyleSheet.create({
   },
   
   micButton: {
-    backgroundColor: "#2196F3",
+    backgroundColor: "#007AFF",
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -1561,20 +1635,20 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   micButtonRecording: {
-    backgroundColor: "#F44336",
+    backgroundColor: "#FF6B35", // Orange from chats theme
   },
-  micButtonText: { fontSize: 20 },
+  micButtonText: { fontSize: 20, color: "#fff" },
   
   aiWrapper: {
     alignSelf: "flex-end",
-    backgroundColor: "#FFF3E0",
+    backgroundColor: "#F0E68C", // Warm khaki matching theme
     borderBottomRightRadius: 4,
     borderLeftWidth: 3,
-    borderLeftColor: "#FF9800",
+    borderLeftColor: "#FF9500", // Orange accent from chats
   },
   aiMsg: {
     fontFamily: "Kreon-Regular",
-    color: "#E65100",
+    color: "#B8860B", // Dark goldenrod for better contrast
     fontSize: 15,
     fontStyle: "italic",
   },
@@ -1620,14 +1694,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 1,
   },
-  myDocument: { backgroundColor: '#E8F5E8' },
-  theirDocument: { backgroundColor: '#F5F5F5' },
+  myDocument: { backgroundColor: '#F0E68C' }, // Warm color matching theme
+  theirDocument: { backgroundColor: '#E9E9E9' },
   
   documentIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#2196F3',
+    backgroundColor: '#007AFF',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1661,14 +1735,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  myAudio: { backgroundColor: '#E8F5E8' },
-  theirAudio: { backgroundColor: '#F5F5F5' },
+  myAudio: { backgroundColor: '#F0E68C' }, // Warm color matching theme
+  theirAudio: { backgroundColor: '#E9E9E9' },
   
   audioIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#34C759', // Green from chats theme
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
@@ -1685,7 +1759,7 @@ const styles = StyleSheet.create({
   audioWave: {
     width: 3,
     height: 12,
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#34C759', // Green from chats theme
     marginRight: 2,
     borderRadius: 2,
   },
@@ -1696,7 +1770,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Kreon-Regular',
     minWidth: 30,
   },
-// Add these to your existing styles object:
 
 // Selection Mode Styles
 selectionInfo: {
@@ -1706,6 +1779,7 @@ selectionInfo: {
 selectionCount: {
   fontSize: 16,
   fontFamily: 'Kreon-Bold',
+  color: '#000',
 },
 selectionActions: {
   flexDirection: 'row',
@@ -1715,7 +1789,7 @@ actionButton: {
   width: 40,
   height: 40,
   borderRadius: 20,
-  backgroundColor: '#2196F3',
+  backgroundColor: '#007AFF',
   alignItems: 'center',
   justifyContent: 'center',
 },
@@ -1726,9 +1800,9 @@ actionIcon: {
 
 // Message Selection Styles
 selectedMessage: {
-  backgroundColor: '#E3F2FD',
+  backgroundColor: '#E9E9E9', // Match chats background
   borderWidth: 2,
-  borderColor: '#2196F3',
+  borderColor: '#007AFF',
 },
 selectionIndicator: {
   position: 'absolute',
@@ -1744,7 +1818,7 @@ selectionIndicator: {
 },
 selectionCheckmark: {
   fontSize: 14,
-  color: '#2196F3',
+  color: '#007AFF',
   fontWeight: 'bold',
 },
 
@@ -1759,12 +1833,12 @@ menuButton: {
 menuIcon: {
   fontSize: 24,
   fontWeight: 'bold',
+  color: '#000',
 },
 
 // Forward Modal Styles
 forwardModalContent: {
-  backgroundColor: 'white',
-  
+  backgroundColor: '#F5F5DC', // Beige matching theme
   width:'100%',
   marginHorizontal: 20,
   borderRadius: 0,
@@ -1777,12 +1851,13 @@ forwardHeader: {
   alignItems: 'center',
   padding: 16,
   borderBottomWidth: 1,
-  borderBottomColor: '#E0E0E0',
+  borderBottomColor: '#C4B896',
+  backgroundColor: '#dcd0a8',
 },
 forwardTitle: {
   fontSize: 18,
   fontFamily: 'Kreon-Bold',
-  color: '#333',
+  color: '#000',
 },
 forwardClose: {
   fontSize: 20,
@@ -1796,13 +1871,13 @@ contactItem: {
   alignItems: 'center',
   padding: 16,
   borderBottomWidth: 1,
-  borderBottomColor: '#F0F0F0',
+  borderBottomColor: '#E9E9E9',
 },
 contactAvatar: {
   width: 40,
   height: 40,
   borderRadius: 20,
-  backgroundColor: '#2196F3',
+  backgroundColor: '#007AFF',
   alignItems: 'center',
   justifyContent: 'center',
   marginRight: 12,
@@ -1818,22 +1893,23 @@ contactInfo: {
 contactName: {
   fontSize: 16,
   fontFamily: 'Kreon-Bold',
-  color: '#333',
+  color: '#000',
 },
 contactPhone: {
   fontSize: 14,
   fontFamily: 'Kreon-Regular',
   color: '#666',
 },
-// Add these to your styles object:
+
+// Search Styles
 searchContainer: {
   flexDirection: 'row',
   alignItems: 'center',
   margin: 16,
   borderWidth: 1,
-  borderColor: '#E0E0E0',
+  borderColor: '#C4B896',
   borderRadius: 8,
-  backgroundColor: '#F9F9F9',
+  backgroundColor: '#F5F5DC',
 },
 searchInput: {
   flex: 1,
@@ -1841,6 +1917,7 @@ searchInput: {
   paddingVertical: 10,
   fontSize: 16,
   fontFamily: 'Kreon-Regular',
+  color: '#000',
 },
 clearSearch: {
   padding: 10,
@@ -1858,9 +1935,10 @@ emptySearchText: {
   color: '#666',
   fontFamily: 'Kreon-Regular',
 },
+
 // Clear Chat Modal Styles
 clearChatModal: {
-  backgroundColor: 'white',
+  backgroundColor: '#F5F5DC', // Beige matching theme
   margin: 20,
   borderRadius: 12,
   padding: 24,
@@ -1869,7 +1947,7 @@ clearChatModal: {
 clearChatTitle: {
   fontSize: 20,
   fontFamily: 'Kreon-Bold',
-  color: '#333',
+  color: '#000',
   marginBottom: 12,
   textAlign: 'center',
 },
@@ -1892,13 +1970,13 @@ clearChatButton: {
   marginHorizontal: 8,
 },
 cancelButton: {
-  backgroundColor: '#F5F5F5',
+  backgroundColor: '#E9E9E9',
 },
 confirmButton: {
-  backgroundColor: '#F44336',
+  backgroundColor: '#FF6B35', // Orange from chats theme
 },
 cancelButtonText: {
-  color: '#333',
+  color: '#000',
   fontSize: 16,
   fontFamily: 'Kreon-Bold',
   textAlign: 'center',
@@ -1909,6 +1987,7 @@ confirmButtonText: {
   fontFamily: 'Kreon-Bold',
   textAlign: 'center',
 },
+
   // Modal Styles
   modalContainer: {
     flex: 1,
@@ -1920,7 +1999,7 @@ confirmButtonText: {
   modalContent: {
     width: '95%',
     height: '80%',
-    backgroundColor: 'white',
+    backgroundColor: '#F5F5DC', // Beige matching theme
     borderRadius: 12,
     overflow: 'hidden',
     position: 'relative',
@@ -1955,7 +2034,7 @@ confirmButtonText: {
   modalVideoText: {
     fontSize: 24,
     fontFamily: 'Kreon-Bold',
-    color: '#333',
+    color: '#000',
     marginBottom: 8,
   },
   modalVideoHint: {
@@ -1966,7 +2045,7 @@ confirmButtonText: {
     marginBottom: 32,
   },
   modalVideoButton: {
-    backgroundColor: '#2196F3',
+    backgroundColor: '#007AFF',
     paddingHorizontal: 32,
     paddingVertical: 16,
     borderRadius: 25,
@@ -1985,29 +2064,29 @@ confirmButtonText: {
 });
 
 const lightTheme = StyleSheet.create({
-  safeArea: { backgroundColor: '#FAFAFA' },
-  container: { backgroundColor: '#FAFAFA' },
-  header: { backgroundColor: '#FFFFFF' },
-  title: { color: '#212121' },
-  headerText: { color: '#212121' },
-  inputContainer: { backgroundColor: '#FAFAFA' },
+  safeArea: { backgroundColor: '#dcd0a8' },
+  container: { backgroundColor: '#dcd0a8' },
+  header: { backgroundColor: '#dcd0a8' },
+  title: { color: '#000' },
+  headerText: { color: '#000' },
+  inputContainer: { backgroundColor: '#dcd0a8' },
   input: { 
-    backgroundColor: '#fff', 
-    color: '#212121', 
-    borderColor: '#E0E0E0',
+    backgroundColor: '#F5F5DC', 
+    color: '#000', 
+    borderColor: '#C4B896',
   },
 });
 
 const darkTheme = StyleSheet.create({
-  safeArea: { backgroundColor: '#121212' },
-  container: { backgroundColor: '#121212' },
-  header: { backgroundColor: '#1E1E1E', borderColor: '#333' },
+  safeArea: { backgroundColor: '#2C2416' }, // Dark version of beige
+  container: { backgroundColor: '#2C2416' },
+  header: { backgroundColor: '#3A301E', borderColor: '#4A3D2A' },
   title: { color: '#FFFFFF' },
   headerText: { color: '#FFFFFF' },
-  inputContainer: { backgroundColor: '#121212', borderColor: '#333' },
+  inputContainer: { backgroundColor: '#2C2416', borderColor: '#4A3D2A' },
   input: { 
-    backgroundColor: '#2C2C2C', 
+    backgroundColor: '#3A301E', 
     color: '#FFFFFF', 
-    borderColor: '#444',
+    borderColor: '#4A3D2A',
   },
 });

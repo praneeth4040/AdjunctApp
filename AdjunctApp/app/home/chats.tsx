@@ -17,7 +17,11 @@ import { PanGestureHandler } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { v4 as uuidv4 } from 'uuid';
+
 import { supabase } from "../../lib/supabase";
+import { fetchLocal, insertLocal, syncToSupabase } from "../../library/database";
 import { useRouter, useFocusEffect } from "expo-router";
 import * as Contacts from "expo-contacts";
 import LinearGradient from "react-native-linear-gradient";
@@ -137,11 +141,21 @@ export default function ChatsScreen() {
     }
   };
   
-  const getUserProfile = async (senderPhone: string) => {
-    try {
+  
+
+const getUserProfile = async (senderPhone: string) => {
+  try {
+    // Get from local SQLite first
+    const profiles = await fetchLocal('profiles');
+    const userProfile = profiles.find(p => p.phone_number === senderPhone);
+    
+    if (userProfile) {
+      setUserName(userProfile.name);
+    } else {
+      // Fallback to Supabase if not found locally
       const { data, error } = await supabase
         .from("profiles")
-        .select("name")
+        .select("user_id, name")
         .eq("phone_number", senderPhone)
         .single();
 
@@ -149,12 +163,19 @@ export default function ChatsScreen() {
         console.error("Error fetching profile:", error.message);
       } else if (data) {
         setUserName(data.name);
+        await insertLocal('profiles', {
+          user_id: data.user_id || uuidv4(),
+          phone_number: senderPhone,
+          name: data.name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
       }
-    } catch (err) {
-      console.error("Unexpected error:", err);
     }
-  };
-
+  } catch (err) {
+    console.error("Unexpected error:", err);
+  }
+};
   const initializeUserStatus = async (phone: string) => {
     try {
       const { data: existingRecord } = await supabase
@@ -237,24 +258,28 @@ export default function ChatsScreen() {
   };
 
   const fetchUserAndContacts = useCallback(async () => {
-    if (isInitialized) return; // Prevent re-initialization
+    if (isInitialized) return;
     
     const contacts = await loadContacts();
-  
+    setContactsMap(contacts); 
     const storedPhone = await getPhoneFromStorage();
     
     if (storedPhone) {
       setPhoneNumber(storedPhone);
       await initializeUserStatus(storedPhone);
       subscribeToStatusChanges(storedPhone);
+      
+      // IMPORTANT: Run migration once
+      await migrateExistingData(storedPhone);
+      
+      // Now use fast conversation fetching
       await fetchConversations(storedPhone);
       subscribeToMessages(storedPhone);
       await fetchLockedChats(storedPhone);
       setIsInitialized(true);
     } else {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      // Handle case when phone not in storage
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
   
       const { data } = await supabase
@@ -271,6 +296,10 @@ export default function ChatsScreen() {
         await AsyncStorage.setItem('senderPhone', phone);
         await initializeUserStatus(phone);
         subscribeToStatusChanges(phone);
+        
+        // Run migration for this user too
+        await migrateExistingData(phone);
+        
         await fetchConversations(phone);
         subscribeToMessages(phone);
         await fetchLockedChats(phone);
@@ -323,64 +352,164 @@ export default function ChatsScreen() {
     }
   };
 
+
+
+
+
   const fetchConversations = async (currentUserPhone: string) => {
-    const { data: messages } = await supabase
-      .from("messages")
-      .select("*")
-      .or(`sender_phone.eq.${currentUserPhone},receiver_phone.eq.${currentUserPhone}`)
-      .order("created_at", { ascending: false });
-
-    const latestMap = new Map<string, SupabaseMessage>();
-    const unreadMap: Record<string, number> = {};
-
-    messages?.forEach((msg) => {
-      const partner =
-        msg.sender_phone === currentUserPhone ? msg.receiver_phone : msg.sender_phone;
-      const clean = normalizePhone(partner);
-
-      if (!latestMap.has(clean)) latestMap.set(clean, msg);
-
-      if (msg.receiver_phone === currentUserPhone && !msg.is_read) {
-        unreadMap[clean] = (unreadMap[clean] || 0) + 1;
+    try {
+      console.log('Fetching conversations from local database...');
+      const startTime = performance.now();
+      
+      // Get conversations from local SQLite first
+      const localConversations = await fetchLocal('conversations');
+      const userConversations = localConversations
+        .filter(conv => conv.user_phone === currentUserPhone)
+        .sort((a, b) => new Date(b.last_message_time).getTime() - new Date(a.last_message_time).getTime());
+      
+      if (userConversations.length > 0) {
+        const result: Conversation[] = userConversations.map(conv => ({
+          id: conv.id,
+          phoneNumber: conv.contact_phone,
+          name: contactsMap[conv.contact_phone] || conv.contact_name || conv.contact_phone,
+          profileImage: conv.profile_picture || "",
+          lastMessage: conv.last_message,
+          time: new Date(conv.last_message_time).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          unreadCount: conv.unread_count || 0,
+          status: ["active", "semiactive", "offline"][Math.floor(Math.random() * 3)] as "active" | "semiactive" | "offline",
+        }));
+        
+        setConversations(result);
+        const endTime = performance.now();
+        console.log(`Conversations loaded from local DB in ${endTime - startTime}ms`);
+        return;
       }
-    });
-
-    const partnerPhones = Array.from(latestMap.keys());
-    const { data: partners } = await supabase
-      .from("profiles")
-      .select("phone_number, profile_picture")
-      .in("phone_number", partnerPhones);
-
-    const result: Conversation[] = partnerPhones.map((phone) => {
-      const msg = latestMap.get(phone)!;
-      const partner = partners?.find(
-        (p) => normalizePhone(p.phone_number) === phone
-      );
-
-      const randomStatus = ["active", "semiactive", "offline"][
-        Math.floor(Math.random() * 3)
-      ] as "active" | "semiactive" | "offline";
-
-      return {
-        id: msg.id,
-        phoneNumber: phone,
-        name: contactsMap[phone] || phone,
-        profileImage: partner?.profile_picture || "",
-        lastMessage: msg.message,
-        time: new Date(msg.created_at).toLocaleTimeString([], {
+      
+      // Fallback to Supabase if local is empty
+      const { data: conversations, error } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_phone', currentUserPhone)
+        .order('last_message_time', { ascending: false });
+      
+      if (error) {
+        console.error('Error fetching conversations:', error);
+        return;
+      }
+      
+      // Store in local DB for next time
+      for (const conv of conversations || []) {
+        await insertLocal('conversations', {
+          id: conv.id,
+          user_phone: conv.user_phone,
+          contact_phone: conv.contact_phone,
+          contact_name: conv.contact_name,
+          last_message: conv.last_message,
+          last_message_time: conv.last_message_time,
+          unread_count: conv.unread_count || 0,
+          profile_picture: conv.profile_picture || "",
+          created_at: conv.created_at || new Date().toISOString(),
+          updated_at: conv.updated_at || new Date().toISOString()
+        });
+      }
+      
+      const result: Conversation[] = (conversations || []).map(conv => ({
+        id: conv.id,
+        phoneNumber: conv.contact_phone,
+        name: contactsMap[conv.contact_phone] || conv.contact_name || conv.contact_phone,
+        profileImage: conv.profile_picture || "",
+        lastMessage: conv.last_message,
+        time: new Date(conv.last_message_time).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
         }),
-        unreadCount: unreadMap[phone] || 0,
-        status: randomStatus,
-      };
-    });
-
-    setConversations(result);
+        unreadCount: conv.unread_count || 0,
+        status: ["active", "semiactive", "offline"][Math.floor(Math.random() * 3)] as "active" | "semiactive" | "offline",
+      }));
+  
+      const endTime = performance.now();
+      console.log(`Conversations loaded in ${endTime - startTime}ms`);
+      
+      setConversations(result);
+      
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+    }
   };
-
   // LOCK/UNLOCK FUNCTIONS
   const LOCK_KEY = "chatlock_password";
+  
+  
+  
+  const updateConversation = async (
+    userPhone: string,
+    contactPhone: string,
+    lastMessage: string,
+    isIncomingMessage: boolean = false
+  ) => {
+    try {
+      const now = new Date().toISOString();
+      
+      // Check if conversation exists
+      const { data: existing } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_phone', userPhone)
+        .eq('contact_phone', contactPhone)
+        .single();
+      
+      if (existing) {
+        // Update existing conversation
+        const { error } = await supabase
+          .from('conversations')
+          .update({
+            last_message: lastMessage,
+            last_message_time: now,
+            unread_count: isIncomingMessage 
+              ? (existing.unread_count || 0) + 1 
+              : existing.unread_count, // Don't change unread for outgoing
+            updated_at: now
+          })
+          .eq('id', existing.id);
+          
+        if (error) console.error('Error updating conversation:', error);
+      } else {
+        // Create new conversation
+        const { error } = await supabase
+          .from('conversations')
+          .insert({
+            user_phone: userPhone,
+            contact_phone: contactPhone,
+            contact_name: contactsMap[contactPhone] || contactPhone,
+            last_message: lastMessage,
+            last_message_time: now,
+            unread_count: isIncomingMessage ? 1 : 0,
+          });
+          
+        if (error) console.error('Error creating conversation:', error);
+      }
+      
+      // Refresh conversations list (now super fast)
+      await fetchConversations(userPhone);
+      
+    } catch (error) {
+      console.error('Error in updateConversation:', error);
+    }
+  };
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   
   const saveLockPassword = async (phoneNumber: string, password: string) => {
     await SecureStore.setItemAsync(LOCK_KEY, password);
@@ -609,6 +738,7 @@ export default function ChatsScreen() {
   };
 
   const markMessagesAsRead = async (partnerPhone: string) => {
+    // Update UI immediately
     setConversations((prev) =>
       prev.map((c) =>
         normalizePhone(c.phoneNumber) === normalizePhone(partnerPhone)
@@ -616,77 +746,154 @@ export default function ChatsScreen() {
           : c
       )
     );
-
-    await supabase
-      .from("messages")
-      .update({ is_read: true })
-      .eq("sender_phone", partnerPhone)
-      .eq("receiver_phone", phoneNumber)
-      .eq("is_read", false);
+  
+    try {
+      // Update conversations table - reset unread count
+      const { error: convError } = await supabase
+        .from('conversations')
+        .update({ unread_count: 0 })
+        .eq('user_phone', phoneNumber)
+        .eq('contact_phone', partnerPhone);
+        
+      if (convError) console.error('Error updating conversation unread:', convError);
+      
+      // Update messages table
+      const { error: msgError } = await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('sender_phone', partnerPhone)
+        .eq('receiver_phone', phoneNumber)
+        .eq('is_read', false);
+        
+      if (msgError) console.error('Error marking messages as read:', msgError);
+  
+      // Also update local SQLite
+      const allMessages = await fetchLocal('messages');
+      const unreadMessages = allMessages.filter(msg =>
+        msg.sender_phone === partnerPhone &&
+        msg.receiver_phone === phoneNumber &&
+        msg.is_read === 0
+      );
+  
+      for (const message of unreadMessages) {
+        await insertLocal('messages', {
+          ...message,
+          is_read: 1,
+        });
+      }
+  
+    } catch (error) {
+      console.error("Error marking messages as read:", error);
+    }
   };
-
+  
+  const migrateExistingData = async (userPhone: string) => {
+    try {
+      // Check if conversations table is empty for this user
+      const { data: existingConversations } = await supabase
+        .from('conversations')
+        .select('id')
+        .eq('user_phone', userPhone)
+        .limit(1);
+      
+      if (existingConversations && existingConversations.length > 0) {
+        console.log('Conversations already migrated');
+        return;
+      }
+      
+      console.log('Migrating existing messages to conversations table...');
+      
+      // Get all messages for this user
+      const { data: allMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_phone.eq.${userPhone},receiver_phone.eq.${userPhone}`)
+        .order('created_at', { ascending: false });
+      
+      if (!allMessages) return;
+      
+      // Group messages by conversation partner
+      const conversationMap = new Map();
+      
+      allMessages.forEach(msg => {
+        const contactPhone = msg.sender_phone === userPhone ? msg.receiver_phone : msg.sender_phone;
+        const isIncoming = msg.receiver_phone === userPhone;
+        
+        if (!conversationMap.has(contactPhone)) {
+          conversationMap.set(contactPhone, {
+            contact_phone: contactPhone,
+            last_message: msg.message,
+            last_message_time: msg.created_at,
+            unread_count: 0
+          });
+        }
+        
+        const conv = conversationMap.get(contactPhone);
+        
+        // Count unread messages
+        if (isIncoming && !msg.is_read) {
+          conv.unread_count++;
+        }
+        
+        // Keep the latest message (since we sorted by created_at desc)
+        if (new Date(msg.created_at) > new Date(conv.last_message_time)) {
+          conv.last_message = msg.message;
+          conv.last_message_time = msg.created_at;
+        }
+      });
+      
+      // Insert all conversations
+      const conversationsToInsert = Array.from(conversationMap.entries()).map(([contactPhone, data]) => ({
+        user_phone: userPhone,
+        contact_phone: contactPhone,
+        contact_name: contactsMap[contactPhone] || contactPhone,
+        last_message: data.last_message,
+        last_message_time: data.last_message_time,
+        unread_count: data.unread_count
+      }));
+      
+      const { error } = await supabase
+        .from('conversations')
+        .insert(conversationsToInsert);
+      
+      if (error) {
+        console.error('Migration error:', error);
+      } else {
+        console.log(`Migrated ${conversationsToInsert.length} conversations`);
+      }
+      
+    } catch (error) {
+      console.error('Error in migration:', error);
+    }
+  };
+  
   const subscribeToMessages = (currentUserPhone: string) => {
-    if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
-
+    // Clear existing subscription
+    if (subscriptionRef.current) {
+      supabase.removeChannel(subscriptionRef.current);
+    }
+  
     const channel = supabase.channel("messages-realtime");
-
+  
     channel.on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "messages" },
       async (payload) => {
         const newMsg = payload.new as SupabaseMessage;
-        if (
-          newMsg.sender_phone !== currentUserPhone &&
-          newMsg.receiver_phone !== currentUserPhone
-        )
-          return;
-
-        const partner =
-          newMsg.sender_phone === currentUserPhone
-            ? newMsg.receiver_phone
-            : newMsg.sender_phone;
-        const clean = normalizePhone(partner);
-
-        const existing = conversations.find(
-          (c) => normalizePhone(c.phoneNumber) === clean
-        );
-
-        let profileImage = existing?.profileImage || "";
-        if (!existing) {
-          const { data: partnerData } = await supabase
-            .from("profiles")
-            .select("profile_picture")
-            .eq("phone_number", partner)
-            .single();
-          profileImage = partnerData?.profile_picture || "";
+        
+        // Only handle incoming messages (not sent by current user)
+        if (newMsg.receiver_phone === currentUserPhone) {
+          console.log('📨 New incoming message received');
+          
+          // The conversation update should be handled by the sender's updateConversationAfterSending
+          // But we can add a small delay and refresh to make sure
+          setTimeout(() => {
+            fetchConversations(currentUserPhone);
+          }, 500);
         }
-
-        const unreadCount =
-          newMsg.receiver_phone === currentUserPhone && !newMsg.is_read
-            ? (existing?.unreadCount || 0) + 1
-            : existing?.unreadCount || 0;
-
-        const updatedConv: Conversation = {
-          id: newMsg.id,
-          phoneNumber: partner,
-          name: contactsMap[clean] || partner,
-          profileImage,
-          lastMessage: newMsg.message,
-          time: new Date(newMsg.created_at).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          unreadCount,
-          status: existing?.status || "offline",
-        };
-
-        setConversations((prev) => [
-          updatedConv,
-          ...prev.filter((c) => normalizePhone(c.phoneNumber) !== clean),
-        ]);
       }
     );
-
+  
     channel.subscribe();
     subscriptionRef.current = channel;
   };

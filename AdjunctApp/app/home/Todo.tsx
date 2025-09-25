@@ -3,337 +3,567 @@ import {
   View,
   Text,
   TextInput,
-  Button,
   FlatList,
   TouchableOpacity,
   Alert,
   StyleSheet,
-  Modal,
-  Platform,
+  StatusBar,
+  Dimensions,
 } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import * as Notifications from "expo-notifications";
-import {supabase} from '../../lib/supabase'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { supabase } from '../../lib/supabase';
+
+// Get screen dimensions
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// Responsive helper functions
+const wp = (percentage: number): number => (screenWidth * percentage) / 100;
+const hp = (percentage: number): number => (screenHeight * percentage) / 100;
+
+// Font scaling based on screen width
+const getFontSize = (size: number): number => {
+  const scale = screenWidth / 375; // Base width (iPhone X/11/12/13 width)
+  const newSize = size * scale;
+  return Math.max(12, Math.min(newSize, size * 1.2)); // Min 12, max 20% larger than original
+};
 
 type Task = {
   id: string;
   title: string;
-  time: Date | null;
-  repeat: "once" | "daily" | "weekly";
+  completed: boolean;
 };
-// ✅ Notification handler (ensures alerts show)
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
 
 const Todo = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [input, setInput] = useState("");
-  const [time, setTime] = useState<Date | null>(null);
-  const [showPicker, setShowPicker] = useState(false);
-  const [pendingTask, setPendingTask] = useState<Omit<Task, "repeat"> | null>(
-    null
-  );
-  const [repeatModal, setRepeatModal] = useState(false);
   const [userPhone, setUserPhone] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    fetchUserPhone();
+    fetchUserAndTasks();
   }, []);
-  
-  const fetchUserPhone = async () => {
-    const { data, error } = await supabase.auth.getUser();
-    if (error) {
-      console.error('Error fetching user:', error.message);
-      return;
-    }
-    console.log(data)
-    const phone = data.user?.phone;
-    if (phone) {
-      setUserPhone(phone);
+
+  const fetchUserAndTasks = async () => {
+    try {
+      // Get authenticated user
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error('Error fetching user:', userError.message);
+        return;
+      }
+
+      const phone = userData.user?.phone;
+      if (phone) {
+        setUserPhone(phone);
+        await fetchTasks(phone);
+      }
+    } catch (error) {
+      console.error('Error fetching user and tasks:', error);
+    } finally {
+      setLoading(false);
     }
   };
-  
-  // ✅ Ask permission for notifications
-  useEffect(() => {
-    (async () => {
-      if (Platform.OS !== "web") {
-        const { status } = await Notifications.requestPermissionsAsync();
-        if (status !== "granted") {
-          Alert.alert("Permission required", "Enable notifications in settings.");
-        }
-      }
-    })();
-  }, []);
 
-  // ✅ Schedule reminder - Fixed TypeScript issues
-  async function scheduleReminder(task: Task) {
-    if (!task.time) return;
-
+  const fetchTasks = async (phone: string) => {
     try {
-      let trigger: any; // Using any to avoid TypeScript issues with expo-notifications types
-
-      if (task.repeat === "daily") {
-        // For daily reminders
-        trigger = {
-          hour: task.time.getHours(),
-          minute: task.time.getMinutes(),
-          repeats: true,
-        };
-      } else if (task.repeat === "weekly") {
-        // For weekly reminders
-        trigger = {
-          weekday: task.time.getDay() + 1, // Sunday=1
-          hour: task.time.getHours(),
-          minute: task.time.getMinutes(),
-          repeats: true,
-        };
-      } else {
-        // For one-time reminders
-        const now = new Date();
-        const scheduledTime = new Date(task.time);
-        
-        if (scheduledTime <= now) {
-          Alert.alert("Error", "Cannot schedule notification for past time");
-          return;
-        }
-
-        trigger = {
-          date: scheduledTime,
-        };
-      }
       
+      const { data, error } = await supabase
+        .from("todos")
+        .select("*")
+        .eq("sender_phone", phone)
+        .order('created_at', { ascending: false });
 
-     const notificationId= await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "⏰ Task Reminder",
-          body: task.title,
-          sound: true,
-        },
-        trigger,
-      });
+      if (error) {
+        console.error("Error fetching tasks:", error.message);
+        return;
+      }
 
-      Alert.alert("Success", "Reminder scheduled successfully!");
-      return notificationId
+      if (data) {
+        const formattedTasks: Task[] = data.map(task => ({
+          id: task.id.toString(),
+          title: task.title,
+          completed: task.completed || false,
+        }));
+        setTasks(formattedTasks);
+      }
     } catch (error) {
-      console.error("Error scheduling notification:", error);
-      Alert.alert("Error", "Failed to schedule reminder");
+      console.error("Error fetching tasks:", error);
     }
-  }
+  };
 
-  // ✅ Add task (opens time picker)
-  const addTask = () => {
+  const addTask = async () => {
     if (input.trim() === "") {
       Alert.alert("Error", "Task cannot be empty");
       return;
     }
-    setShowPicker(true);
-  };
 
-  // ✅ Finalize task with repeat option
- const finalizeTask = async (repeat: "once" | "daily" | "weekly") => {
-  if (pendingTask && userPhone) {
-    const newTask: Task = { ...pendingTask, repeat };
-
-    // 🔔 Schedule reminder and get the notification ID
-    const notificationId = await scheduleReminder(newTask);
-
-    if (!notificationId) return;
-
-    // 🟢 Save to Supabase
-    const { error } = await supabase.from("todos").insert({
-      sender_phone: userPhone,
-      title: newTask.title,
-      time: newTask.time?.toISOString() ?? null,
-      repeat: newTask.repeat,
-      notification_id: notificationId,
-    });
-
-    if (error) {
-      console.error("Error inserting into Supabase:", error.message);
-      Alert.alert("Error", "Failed to save task to database");
-    } else {
-      setTasks((prev) => [...prev, newTask]);
-      setInput("");
-      setPendingTask(null);
-      setRepeatModal(false);
-      Alert.alert("Success", "Task saved and reminder scheduled!");
-    }
-  }
-};
-
-
-  // ✅ Delete task
- // ✅ Delete task (from state, Supabase, and cancel notification)
-const deleteTask = async (id: string) => {
-  try {
-    // Find task
-    const taskToDelete = tasks.find((t) => t.id === id);
-    if (!taskToDelete) return;
-
-    // 1. Cancel notification(s)
-    const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
-    const taskNotifications = scheduledNotifications.filter(
-      (notification) =>
-        notification.content.body === taskToDelete.title
-    );
-
-    for (const notification of taskNotifications) {
-      await Notifications.cancelScheduledNotificationAsync(notification.identifier);
-    }
-
-    // 2. Delete from Supabase
-    const { error } = await supabase
-      .from("todos")
-      .delete()
-      .eq("title", taskToDelete.title) // ⚠️ safer to use notification_id instead
-      .eq("sender_phone", userPhone);
-
-    if (error) {
-      console.error("Error deleting task from Supabase:", error.message);
-      Alert.alert("Error", "Failed to delete task from database");
+    if (!userPhone) {
+      Alert.alert("Error", "User not authenticated");
       return;
     }
 
-    // 3. Remove locally
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    Alert.alert("Deleted", "Task deleted successfully!");
-  } catch (error) {
-    console.error("Error canceling notifications:", error);
-  }
-};
+    try {
+      const newTask = {
+        sender_phone: userPhone,
+        title: input.trim(),
+        completed: false,
+      };
 
-  // ✅ Handle time selection
-  const onTimeChange = (_: any, selectedTime?: Date) => {
-    setShowPicker(false);
-    if (selectedTime) {
-      setTime(selectedTime);
-      setPendingTask({ id: Date.now().toString(), title: input, time: selectedTime });
-      setRepeatModal(true); // ask repeat option
+      const { data, error } = await supabase
+        .from("todos")
+        .insert(newTask)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error adding task:", error.message);
+        Alert.alert("Error", "Failed to add task");
+        return;
+      }
+
+      if (data) {
+        const taskToAdd: Task = {
+          id: data.id.toString(),
+          title: data.title,
+          completed: data.completed || false,
+        };
+        
+        setTasks(prev => [taskToAdd, ...prev]);
+        setInput("");
+      }
+    } catch (error) {
+      console.error("Error adding task:", error);
+      Alert.alert("Error", "Failed to add task");
     }
   };
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>📋 To-Do List</Text>
+  const toggleTask = async (id: string) => {
+    try {
+      const task = tasks.find(t => t.id === id);
+      if (!task) return;
 
-      {/* Input + Add */}
-      <View style={styles.inputRow}>
-        <TextInput
-          style={styles.input}
-          placeholder="Enter task..."
-          value={input}
-          onChangeText={setInput}
-        />
-        <Button title="Add" onPress={addTask} />
+      const { error } = await supabase
+        .from("todos")
+        .update({ completed: !task.completed })
+        .eq("id", id)
+        .eq("sender_phone", userPhone);
+
+      if (error) {
+        console.error("Error updating task:", error.message);
+        Alert.alert("Error", "Failed to update task");
+        return;
+      }
+
+      setTasks(prev => 
+        prev.map(t => 
+          t.id === id ? { ...t, completed: !t.completed } : t
+        )
+      );
+    } catch (error) {
+      console.error("Error toggling task:", error);
+      Alert.alert("Error", "Failed to update task");
+    }
+  };
+
+  const deleteTask = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("todos")
+        .delete()
+        .eq("id", id)
+        .eq("sender_phone", userPhone);
+
+      if (error) {
+        console.error("Error deleting task:", error.message);
+        Alert.alert("Error", "Failed to delete task");
+        return;
+      }
+
+      setTasks(prev => prev.filter(t => t.id !== id));
+    } catch (error) {
+      console.error("Error deleting task:", error);
+      Alert.alert("Error", "Failed to delete task");
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <StatusBar barStyle="dark-content" backgroundColor="#dcd0a8" />
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading your tasks...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!userPhone) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <StatusBar barStyle="dark-content" backgroundColor="#dcd0a8" />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Please authenticate{'\n'}to use the todo app</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const completedCount = tasks.filter(t => t.completed).length;
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <StatusBar barStyle="dark-content" backgroundColor="#dcd0a8" />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>My Tasks</Text>
       </View>
 
-      {/* List of tasks */}
-      <FlatList
-        data={tasks}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View style={styles.taskRow}>
-            <Text style={styles.taskText}>
-              {item.title}{" "}
-              {item.time
-                ? `⏰ ${item.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                : ""}
-              {item.repeat !== "once" ? ` (${item.repeat})` : ""}
-            </Text>
-            <TouchableOpacity onPress={() => deleteTask(item.id)}>
-              <Text style={styles.deleteBtn}>❌</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      />
+      {/* Progress Indicators */}
+      <View style={styles.progressContainer}>
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${tasks.length > 0 ? (completedCount / tasks.length) * 100 : 0}%` }]} />
+        </View>
+        <Text style={styles.progressText}>
+          {completedCount} of {tasks.length} completed
+        </Text>
+      </View>
 
-      {/* Time Picker */}
-      {showPicker && (
-        <DateTimePicker
-          mode="time"
-          value={new Date()}
-          onChange={onTimeChange}
-        />
-      )}
-
-      {/* Repeat Option Modal */}
-      <Modal visible={repeatModal} transparent animationType="slide">
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={{ fontSize: 18, fontWeight: "bold", marginBottom: 15 }}>
-              Repeat this task?
-            </Text>
-            <View style={styles.buttonContainer}>
-              <Button title="Once" onPress={() => finalizeTask("once")} />
-              <Button title="Daily" onPress={() => finalizeTask("daily")} />
-              <Button title="Weekly" onPress={() => finalizeTask("weekly")} />
-              <Button
-                title="Cancel"
-                color="red"
-                onPress={() => {
-                  setRepeatModal(false);
-                  setPendingTask(null);
-                }}
-              />
+      {/* Main Content */}
+      <View style={styles.content}>
+        {/* Stats Card */}
+        <View style={styles.statsCard}>
+          <Text style={styles.statsTitle}>Today's Progress</Text>
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{tasks.length}</Text>
+              <Text style={styles.statLabel}>Total</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{completedCount}</Text>
+              <Text style={styles.statLabel}>Done</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{tasks.length - completedCount}</Text>
+              <Text style={styles.statLabel}>Pending</Text>
             </View>
           </View>
         </View>
-      </Modal>
-    </View>
+
+        {/* Add Task Section */}
+        <View style={styles.inputSection}>
+          <Text style={styles.sectionTitle}>Add New Task</Text>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="What needs to be done?"
+              placeholderTextColor="#6f634f"
+              value={input}
+              onChangeText={setInput}
+              onSubmitEditing={addTask}
+            />
+            <TouchableOpacity style={styles.addButton} onPress={addTask}>
+              <Text style={styles.addButtonText}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Tasks List */}
+        <View style={styles.tasksSection}>
+          <Text style={styles.sectionTitle}>Your Tasks</Text>
+          
+          <FlatList
+            data={tasks}
+            keyExtractor={(item) => item.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContainer}
+            renderItem={({ item }) => (
+              <TouchableOpacity 
+                style={[styles.taskCard, item.completed && styles.completedTaskCard]}
+                onPress={() => toggleTask(item.id)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.taskContent}>
+                  <View style={[styles.checkbox, item.completed && styles.checkedBox]}>
+                    {item.completed && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <Text style={[
+                    styles.taskText,
+                    item.completed && styles.completedTaskText
+                  ]}>
+                    {item.title}
+                  </Text>
+                </View>
+                
+                <TouchableOpacity 
+                  onPress={() => deleteTask(item.id)}
+                  style={styles.deleteButton}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={styles.deleteButtonText}>×</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyTitle}>No tasks yet!</Text>
+                <Text style={styles.emptySubtitle}>
+                  Add your first task above{'\n'}to get started
+                </Text>
+              </View>
+            }
+          />
+        </View>
+      </View>
+
+      {/* Bottom Indicator */}
+      <View style={styles.bottomIndicator} />
+    </SafeAreaView>
   );
 };
 
-export default Todo;
-
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#E9E9E9" },
-  heading: { fontSize: 24, fontWeight: "bold", marginBottom: 20, textAlign: "center" },
-  inputRow: { flexDirection: "row", marginBottom: 15 },
-  input: {
+  safeArea: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    padding: 10,
-    borderRadius: 5,
-    marginRight: 10,
+    backgroundColor: '#dcd0a8',
+    paddingHorizontal: wp(5),
   },
-  taskRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    padding: 12,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    marginBottom: 10,
-    elevation: 2,
-    shadowColor: "#000",
+  header: {
+    alignItems: 'center',
+    marginBottom: hp(2),
+  },
+  title: {
+    fontSize: getFontSize(24),
+    fontFamily: 'Kreon-Bold',
+    textAlign: 'center',
+    color: '#000',
+  },
+  progressContainer: {
+    marginBottom: hp(3),
+    alignItems: 'center',
+  },
+  progressBar: {
+    width: wp(60),
+    height: 4,
+    backgroundColor: '#f1dea9',
+    borderRadius: 2,
+    marginBottom: hp(1),
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#b2ffe2',
+    borderRadius: 2,
+  },
+  progressText: {
+    fontSize: getFontSize(14),
+    color: '#6f634f',
+    fontFamily: 'Kreon-Regular',
+  },
+  content: {
+    flex: 1,
+  },
+  statsCard: {
+    backgroundColor: '#f1dea9',
+    padding: wp(5),
+    borderRadius: 15,
+    marginBottom: hp(3),
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  taskText: { fontSize: 16, flex: 1 },
-  deleteBtn: { fontSize: 18 },
-  modalContainer: {
+  statsTitle: {
+    fontSize: getFontSize(18),
+    fontFamily: 'Kreon-Bold',
+    color: '#000',
+    textAlign: 'center',
+    marginBottom: hp(2),
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: getFontSize(24),
+    fontFamily: 'Kreon-Bold',
+    color: '#000',
+  },
+  statLabel: {
+    fontSize: getFontSize(12),
+    fontFamily: 'Kreon-Regular',
+    color: '#6f634f',
+    marginTop: 2,
+  },
+  inputSection: {
+    marginBottom: hp(3),
+  },
+  sectionTitle: {
+    fontSize: getFontSize(16),
+    fontFamily: 'Kreon-Bold',
+    color: '#000',
+    marginBottom: hp(1.5),
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    gap: wp(3),
+  },
+  input: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: '#f1dea9',
+    paddingVertical: hp(1.5),
+    paddingHorizontal: wp(4),
+    borderRadius: 12,
+    fontSize: getFontSize(16),
+    fontFamily: 'Kreon-Regular',
+    color: '#000',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  modalContent: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 10,
-    width: "80%",
-    alignItems: "center",
+  addButton: {
+    backgroundColor: '#b2ffe2',
+    paddingHorizontal: wp(5),
+    paddingVertical: hp(1.5),
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
-  buttonContainer: {
-    width: "100%",
-    gap: 10,
+  addButtonText: {
+    fontSize: getFontSize(24),
+    fontFamily: 'Kreon-Bold',
+    color: '#000',
+  },
+  tasksSection: {
+    flex: 1,
+  },
+  listContainer: {
+    paddingBottom: hp(2),
+  },
+  taskCard: {
+    backgroundColor: '#f1dea9',
+    padding: wp(4),
+    borderRadius: 12,
+    marginBottom: hp(1.5),
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  completedTaskCard: {
+    backgroundColor: '#e8dcc0',
+    opacity: 0.8,
+  },
+  taskContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#6f634f',
+    marginRight: wp(3),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkedBox: {
+    backgroundColor: '#b2ffe2',
+    borderColor: '#b2ffe2',
+  },
+  checkmark: {
+    fontSize: getFontSize(14),
+    fontFamily: 'Kreon-Bold',
+    color: '#000',
+  },
+  taskText: {
+    fontSize: getFontSize(16),
+    fontFamily: 'Kreon-Regular',
+    color: '#000',
+    flex: 1,
+  },
+  completedTaskText: {
+    textDecorationLine: 'line-through',
+    color: '#6f634f',
+  },
+  deleteButton: {
+    padding: wp(2),
+  },
+  deleteButtonText: {
+    fontSize: getFontSize(20),
+    color: '#6f634f',
+    fontFamily: 'Kreon-Bold',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: hp(6),
+  },
+  emptyTitle: {
+    fontSize: getFontSize(18),
+    fontFamily: 'Kreon-Bold',
+    color: '#000',
+    marginBottom: hp(1),
+  },
+  emptySubtitle: {
+    fontSize: getFontSize(14),
+    fontFamily: 'Kreon-Regular',
+    color: '#6f634f',
+    textAlign: 'center',
+    lineHeight: getFontSize(20),
+  },
+  bottomIndicator: {
+    width: Math.min(wp(35), 150), // Max width for larger screens
+    height: hp(0.6),
+    minHeight: 4,
+    maxHeight: 8,
+    backgroundColor: '#f1dea9',
+    borderRadius: hp(0.3),
+    alignSelf: 'center',
+    marginBottom: hp(1.2),
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: wp(10),
+  },
+  loadingText: {
+    fontSize: getFontSize(18),
+    fontFamily: 'Kreon-Regular',
+    color: '#6f634f',
+    textAlign: 'center',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: wp(10),
+  },
+  errorText: {
+    fontSize: getFontSize(16),
+    fontFamily: 'Kreon-Regular',
+    color: '#6f634f',
+    textAlign: 'center',
+    lineHeight: getFontSize(22),
+    maxWidth: 300, // Prevent text from becoming too wide on tablets
   },
 });
+
+export default Todo;
