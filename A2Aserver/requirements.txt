@@ -9,3 +9,4 @@ a2a-sdk
 a2a-sdk[http-server]
 a2a-sdk[all]
 httpx
+supabase

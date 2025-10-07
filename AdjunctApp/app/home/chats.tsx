@@ -422,10 +422,13 @@ const getUserProfile = async (senderPhone: string) => {
         name: contactsMap[conv.contact_phone] || conv.contact_name || conv.contact_phone,
         profileImage: conv.profile_picture || "",
         lastMessage: conv.last_message,
-        time: new Date(conv.last_message_time).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        time: conv.last_message_time
+  ? new Date(conv.last_message_time).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  : "", // or "00:00" / "—"
+
         unreadCount: conv.unread_count || 0,
         status: ["active", "semiactive", "offline"][Math.floor(Math.random() * 3)] as "active" | "semiactive" | "offline",
       }));
@@ -1169,7 +1172,7 @@ const getUserProfile = async (senderPhone: string) => {
             <FlatList
               data={unlockSelectionMode ? getLockedConversations() : getVisibleConversations()}
               renderItem={renderChatItem}
-              keyExtractor={(item) => item.id.toString()}
+              keyExtractor={(item, index) => item.id?.toString() || `chat-${index}`}
               contentContainerStyle={{ padding: 16, paddingTop: 24 }}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={

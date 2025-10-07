@@ -30,9 +30,10 @@ import { supabase } from "../../lib/supabase";
 import { getOrCreateKeys, encryptMessage, decryptMessage } from "../../lib/encrypt";
 import axios from 'axios';
 import * as FileSystem from "expo-file-system";
-
+import { v4 as uuidv4 } from 'uuid';
 const { width: screenWidth } = Dimensions.get('window');
-
+import * as SQLite from "expo-sqlite";
+const db = SQLite.openDatabaseSync("app.db");
 type Message = {
   id: string;
   sender_phone: string;
@@ -814,6 +815,40 @@ useEffect(() => {
         }
       }
       
+
+      // after successful Supabase update or insert
+      const safeNow = now ?? new Date().toISOString();
+try {
+  // Check if local conversation exists
+const localExisting = await db.getAllAsync(
+  `SELECT * FROM conversations WHERE user_phone = ? AND contact_phone = ?`,
+  [userPhone, contactPhone]
+);
+
+if (localExisting.length > 0) {
+  // Update existing conversation
+  await db.runAsync(
+    `UPDATE conversations 
+       SET last_message = ?, last_message_time = ?, unread_count = ? 
+     WHERE user_phone = ? AND contact_phone = ?`,
+    [lastMessage, now, 0, userPhone, contactPhone]
+  );
+  console.log("✅ Local conversation updated");
+} else {
+  // Insert new conversation
+  await db.runAsync(
+    `INSERT INTO conversations 
+       (id, user_phone, contact_phone, contact_name, last_message, last_message_time, unread_count) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [uuidv4(), userPhone, contactPhone, contactName, lastMessage, now, 0]
+  );
+  console.log("✅ Local conversation created");
+}
+
+} catch (err) {
+  console.error("❌ Error updating local conversation:", err);
+}
+
     } catch (error) {
       console.error('Error in updateConversationAfterSending:', error);
     }

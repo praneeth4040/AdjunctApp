@@ -155,11 +155,9 @@ const logSync = async (
 
 export const syncToSupabase = async (table: string) => {
   try {
-    
     const unsynced = await db.getAllAsync<any>(
       `SELECT * FROM ${table} WHERE pending_sync = 1 AND deleted = 0;`
     );
-
     console.log(`[SYNC →] ${table} unsynced records:`, unsynced);
 
     if (unsynced.length === 0) {
@@ -167,42 +165,41 @@ export const syncToSupabase = async (table: string) => {
       return;
     }
 
-    const { error } = await supabase.from(table).upsert(unsynced);
+    const { data, error } = await supabase.from(table).upsert(unsynced);
+    console.log(`[SYNC →] Supabase response for ${table}:`, { data, error });
+
     if (error) {
       console.error(`[SYNC → ERROR] ${table}:`, error.message);
       await logSync(table, "push", unsynced.length, "error");
       return;
     }
 
-    console.log(`[SYNC →] Pushed ${unsynced.length} records to Supabase (${table})`);
-
-    // Get the correct primary key column for each table
-    const getPrimaryKey = (tableName: string) => {
-      switch (tableName) {
-        case 'profiles':
-          return 'user_id';
-        case 'usersmodes':
-          return 'id'; // or phone if that's the primary key
+    // Determine primary key column
+    const getPrimaryKey = (t: string) => {
+      switch (t) {
+        case "profiles":
+          return "user_id";
         default:
-          return 'id';
+          return "id";
       }
     };
-
     const primaryKey = getPrimaryKey(table);
 
-    for (const record of unsynced) {
-      await db.runAsync(
-        `UPDATE ${table} SET pending_sync = 0, last_synced_at = ? WHERE ${primaryKey} = ?;`,
-        [new Date().toISOString(), record[primaryKey]]
-      );
-    }
+    // Bulk update for speed & reliability
+    const ids = unsynced.map(r => `'${r[primaryKey]}'`).join(",");
+    await db.runAsync(
+      `UPDATE ${table} SET pending_sync = 0, last_synced_at = ? WHERE ${primaryKey} IN (${ids});`,
+      [new Date().toISOString()]
+    );
 
+    console.log(`✅ Marked ${unsynced.length} records as synced in ${table}`);
     await logSync(table, "push", unsynced.length, "ok");
   } catch (err) {
     console.error(`[SYNC → CRASH] ${table}:`, err);
     await logSync(table, "push", 0, "crash");
   }
 };
+
 
 export const cleanupInvalidUUIDs = async () => {
   try {
