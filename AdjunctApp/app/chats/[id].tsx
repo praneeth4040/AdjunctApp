@@ -17,7 +17,7 @@ import { useMessages } from '../../hooks/useMessages';
 import { useMediaHandling } from '../../hooks/useMediaHandling';
 import { useAudioRecording } from '../../hooks/useAudioRecording';
 import { useMessageSelection } from '../../hooks/useMessageSelection';
-import { useContacts } from '../../hooks/useContacts';
+import { useChatContacts } from '../../hooks/useChatContacts';
 import { useAIAssistant } from '../../hooks/useAIAssistant';
 
 // Import components
@@ -97,7 +97,7 @@ const [showClearChatModal, setShowClearChatModal] = useState(false);
     clearAllChat,
   } = useMessageSelection(messages);
 
-  const { contacts, loadContacts } = useContacts(senderPhone);
+  const { contacts, loadContacts } = useChatContacts(senderPhone);
 
   const { handleAI, handleAICommand } = useAIAssistant(
     senderPhone,
