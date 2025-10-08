@@ -84,6 +84,24 @@ export default function ChatsScreen() {
   // Two-finger gesture tracking
   const gestureStartTime = useRef<number>(0);
   const numberOfTouches = useRef<number>(0);
+  const [greeting, setGreeting] = useState("Good morning");
+
+// Add this function (can place it after normalizePhone)
+const getTimeBasedGreeting = () => {
+  const hour = new Date().getHours();
+  
+  if (hour >= 5 && hour < 12) {
+    return "Good Morning";
+  } else if (hour >= 12 && hour < 17) {
+    return "Good Afternoon";
+  } else if (hour >= 17 && hour < 21) {
+    return "Good Evening";
+  } else {
+    return "Good Night";
+  }
+};
+
+
   
   const normalizePhone = (phone?: string) => phone?.replace(/\D/g, "") || "";
 
@@ -867,6 +885,28 @@ export default function ChatsScreen() {
       backHandler.remove();
     };
   }, [fetchUserAndContacts, selectionMode]);
+// Update your existing useEffect (the one with fetchUserAndContacts)
+useEffect(() => {
+  // Set initial greeting
+  setGreeting(getTimeBasedGreeting());
+  
+  // Update greeting every minute
+  const greetingInterval = setInterval(() => {
+    setGreeting(getTimeBasedGreeting());
+  }, 60000); // Check every minute
+  
+  fetchUserAndContacts();
+  
+  const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+  
+  return () => {
+    if (subscriptionRef.current) supabase.removeChannel(subscriptionRef.current);
+    if (statusSubscriptionRef.current) supabase.removeChannel(statusSubscriptionRef.current);
+    backHandler.remove();
+    clearInterval(greetingInterval); // Clean up interval
+  };
+}, [fetchUserAndContacts, selectionMode]);
+
 
   const getNextStatus = (currentStatus: "active" | "semiactive" | "offline") => {
     switch (currentStatus) {
@@ -1059,7 +1099,7 @@ export default function ChatsScreen() {
           ) : (
             <>
               <View>
-                <Text style={styles.greeting}>Good morning</Text>
+                <Text style={styles.greeting}>{greeting}</Text>
                 <Text style={styles.username}>{userName || "Loading..."}</Text>
               </View>
               <View style={styles.headerIcons}>
@@ -1247,7 +1287,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  greeting: { fontSize: 14, fontFamily: "Kreon-Regular", color: "#000" },
+  greeting: { fontSize: 16, fontFamily: "Kreon-Regular", color: "#000" },
   username: { fontSize: 28, fontFamily: "Kreon-Bold", color: "#000" },
   headerIcons: { flexDirection: "row", alignItems: "center" },
   searchButton: {
