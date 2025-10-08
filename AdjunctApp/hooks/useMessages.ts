@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { getOrCreateKeys, decryptMessage } from '../lib/encrypt';
 import { Message } from '../components/chat/MessageBubble';
-
+const db = SQLite.openDatabaseSync("app.db");
+import * as SQLite from "expo-sqlite";
+import { v4 as uuidv4 } from 'uuid';
 export const useMessages = (
   senderPhone: string,
   receiverPhone: string,
@@ -109,6 +111,7 @@ export const useMessages = (
     try {
       const now = new Date().toISOString();
       
+      // Check if conversation exists
       const { data: existing } = await supabase
         .from('conversations')
         .select('*')
@@ -117,12 +120,14 @@ export const useMessages = (
         .single();
       
       if (existing) {
+        // Update existing conversation
         const { error } = await supabase
           .from('conversations')
           .update({
             last_message: lastMessage,
             last_message_time: now,
             updated_at: now
+            // Don't update unread_count for outgoing messages
           })
           .eq('id', existing.id);
           
@@ -132,15 +137,16 @@ export const useMessages = (
           console.log('✅ Conversation updated successfully');
         }
       } else {
+        // Create new conversation
         const { error } = await supabase
           .from('conversations')
           .insert({
             user_phone: userPhone,
             contact_phone: contactPhone,
-            contact_name: contactPhone,
+            contact_name: contactPhone, // You might want to get the actual name from contacts
             last_message: lastMessage,
             last_message_time: now,
-            unread_count: 0,
+            unread_count: 0, // 0 for outgoing messages
           });
           
         if (error) {
@@ -149,6 +155,41 @@ export const useMessages = (
           console.log('✅ New conversation created successfully');
         }
       }
+      
+
+      // after successful Supabase update or insert
+      const safeNow = now ?? new Date().toISOString();
+try {
+  // Check if local conversation exists
+const localExisting = await db.getAllAsync(
+  `SELECT * FROM conversations WHERE user_phone = ? AND contact_phone = ?`,
+  [userPhone, contactPhone]
+);
+
+if (localExisting.length > 0) {
+  // Update existing conversation
+  await db.runAsync(
+    `UPDATE conversations 
+       SET last_message = ?, last_message_time = ?, unread_count = ? 
+     WHERE user_phone = ? AND contact_phone = ?`,
+    [lastMessage, now, 0, userPhone, contactPhone]
+  );
+  console.log("✅ Local conversation updated");
+} else {
+  // Insert new conversation
+  await db.runAsync(
+    `INSERT INTO conversations 
+       (id, user_phone, contact_phone, contact_name, last_message, last_message_time, unread_count) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [uuidv4(), userPhone, contactPhone, contactPhone, lastMessage, now, 0]
+  );
+  console.log("✅ Local conversation created");
+}
+
+} catch (err) {
+  console.error("❌ Error updating local conversation:", err);
+}
+
     } catch (error) {
       console.error('Error in updateConversationAfterSending:', error);
     }
