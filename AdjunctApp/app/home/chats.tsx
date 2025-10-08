@@ -93,7 +93,7 @@ export default function ChatsScreen() {
       await migrateExistingData(storedPhone);
       
       // Fetch conversations and set up subscriptions
-      await fetchConversations(storedPhone, contacts);
+      await fetchConversations(storedPhone, contactsMap);
       subscribeToMessages(storedPhone);
       await fetchLockedChats(storedPhone);
         setIsInitialized(true);

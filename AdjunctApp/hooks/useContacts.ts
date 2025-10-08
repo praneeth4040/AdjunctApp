@@ -1,41 +1,61 @@
-import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
+import { useState, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Contacts from 'expo-contacts';
 
-interface Contact {
-  phone: string;
-  name: string;
-}
+export const useContacts = () => {
+  const [contactsMap, setContactsMap] = useState<Record<string, string>>({});
+  const [contactsLoaded, setContactsLoaded] = useState(false);
 
-export const useContacts = (senderPhone: string) => {
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const normalizePhone = (phone?: string) => phone?.replace(/\D/g, "") || "";
 
   const loadContacts = useCallback(async () => {
+    if (contactsLoaded) return contactsMap; // Don't reload if already loaded
+    
     try {
-      console.log("Loading contacts for sender:", senderPhone);
-      
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("phone_number, name")
-        .neq("phone_number", senderPhone);
-      
-      console.log("Supabase response:", { data, error });
-      
-      if (error) throw error;
-      
-      const contactList = (data || []).map(profile => ({
-        phone: profile.phone_number,
-        name: profile.name || profile.phone_number
-      }));
-      
-      console.log("Final contacts:", contactList);
-      setContacts(contactList);
-    } catch (err) {
-      console.error("Load contacts error:", err);
+      // Try loading from AsyncStorage first
+      const storedContacts = await AsyncStorage.getItem('contactsMap');
+      if (storedContacts) {
+        const parsedContacts = JSON.parse(storedContacts);
+        setContactsMap(parsedContacts);
+        setContactsLoaded(true);
+        return parsedContacts;
+      }
+  
+      // Only fetch from device if not in storage
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        setContactsLoaded(true);
+        return {};
+      }
+  
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
+      });
+  
+      const phoneMap: Record<string, string> = {};
+      data.forEach((contact) => {
+        contact.phoneNumbers?.forEach((num) => {
+          const clean = normalizePhone(num.number);
+          if (clean) phoneMap[clean] = contact.name || "";
+        });
+      });
+  
+      // Save to AsyncStorage
+      await AsyncStorage.setItem('contactsMap', JSON.stringify(phoneMap));
+      setContactsMap(phoneMap);
+      setContactsLoaded(true);
+      return phoneMap;
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+      setContactsLoaded(true);
+      return {};
     }
-  }, [senderPhone]);
+  }, [contactsLoaded, contactsMap]);
 
   return {
-    contacts,
+    contactsMap,
+    contactsLoaded,
     loadContacts,
+    normalizePhone,
   };
 };
