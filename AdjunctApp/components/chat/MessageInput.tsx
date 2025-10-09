@@ -6,7 +6,16 @@ import {
   Text,
   ActivityIndicator,
   StyleSheet,
+  Dimensions,
+  Platform,
 } from 'react-native';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Dynamic sizing based on screen width
+const scale = (size: number) => (SCREEN_WIDTH / 375) * size;
+const verticalScale = (size: number) => (SCREEN_HEIGHT / 812) * size;
+const moderateScale = (size: number, factor = 0.5) => size + (scale(size) - size) * factor;
 
 interface MessageInputProps {
   input: string;
@@ -40,7 +49,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
       
       {/* Text Input */}
       <TextInput
-        placeholder={recording ? "Recording..." : "Type a message or tap 📎 for media..."}
+        placeholder={recording ? "Recording..." : "Type a message..."}
         placeholderTextColor={privacyMode ? '#bbb' : '#999'}
         style={[styles.input, privacyMode && styles.inputPrivacy]}
         value={input}
@@ -76,12 +85,14 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: "row",
     alignItems: "flex-end",
-    padding: 8,
+    paddingVertical: moderateScale(10),
+    paddingHorizontal: moderateScale(8),
     borderTopWidth: 0.5,
     borderColor: "#C4B896",
-    marginBottom: 4,
-    gap: 8,
+    gap: moderateScale(8),
     backgroundColor: "#dcd0a8",
+    minHeight: moderateScale(60),
+    marginBottom: 0,
   },
   inputContainerPrivacy: {
     backgroundColor: "#2C2416",
@@ -89,9 +100,9 @@ const styles = StyleSheet.create({
   },
   mediaButton: {
     backgroundColor: "#E9E9E9",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: moderateScale(44),
+    height: moderateScale(44),
+    borderRadius: moderateScale(22),
     alignItems: "center",
     justifyContent: "center",
     elevation: 2,
@@ -101,23 +112,34 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   mediaIcon: { 
-    fontSize: 20, 
+    fontSize: moderateScale(20), 
     transform: [{ rotate: '45deg' }], 
     color: "#666" 
   },
   input: {
     flex: 1,
     borderWidth: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 25,
+    paddingVertical: moderateScale(10),
+    paddingHorizontal: moderateScale(14),
+    borderRadius: moderateScale(22),
     fontFamily: "Kreon-Regular",
-    fontSize: 16,
-    maxHeight: 100,
+    fontSize: moderateScale(15),
+    lineHeight: moderateScale(20),
+    minHeight: moderateScale(44),
+    maxHeight: moderateScale(100),
     textAlignVertical: 'center',
     backgroundColor: "#F5F5DC",
     borderColor: "#C4B896",
     color: "#000",
+    ...Platform.select({
+      ios: {
+        paddingTop: moderateScale(12),
+      },
+      android: {
+        paddingTop: moderateScale(10),
+        textAlignVertical: 'center',
+      },
+    }),
   },
   inputPrivacy: {
     backgroundColor: "#3A301E",
@@ -126,9 +148,9 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     backgroundColor: "#34C759",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: moderateScale(44),
+    height: moderateScale(44),
+    borderRadius: moderateScale(22),
     alignItems: "center",
     justifyContent: "center",
     elevation: 3,
@@ -138,15 +160,15 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   sendButtonText: { 
-    fontSize: 20, 
+    fontSize: moderateScale(20), 
     color: "#fff", 
     fontWeight: "bold" 
   },
   micButton: {
     backgroundColor: "#007AFF",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: moderateScale(44),
+    height: moderateScale(44),
+    borderRadius: moderateScale(22),
     alignItems: "center",
     justifyContent: "center",
     elevation: 3,
@@ -159,7 +181,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FF6B35",
   },
   micButtonText: { 
-    fontSize: 20, 
+    fontSize: moderateScale(20), 
     color: "#fff" 
   },
 });
