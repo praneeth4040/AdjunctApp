@@ -55,8 +55,8 @@ export default function ChatScreen({ onMessagesRead }: { onMessagesRead?: (phone
     uri: '',
     type: 'image'
   });
-const [showForwardModal, setShowForwardModal] = useState(false);
-const [showClearChatModal, setShowClearChatModal] = useState(false);
+  const [showForwardModal, setShowForwardModal] = useState(false);
+  const [showClearChatModal, setShowClearChatModal] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
 
   // Refs
@@ -135,15 +135,15 @@ const [showClearChatModal, setShowClearChatModal] = useState(false);
           .from('profiles')
           .select('name')
           .eq('phone_number', receiverPhone)
-                .single();
+          .single();
 
-      if (error) {
+        if (error) {
           console.error('Error loading contact:', error);
           setContactName(receiverPhone);
         } else {
           setContactName(data?.name || receiverPhone);
-            }
-          } catch (err) {
+        }
+      } catch (err) {
         console.error('Unexpected error:', err);
         setContactName(receiverPhone);
       } finally {
@@ -162,11 +162,11 @@ const [showClearChatModal, setShowClearChatModal] = useState(false);
   );
 
   // Load contacts when forward modal opens
-useEffect(() => {
-  if (showForwardModal) {
-    console.log("Forward modal opened, loading contacts...");
-    loadContacts();
-  }
+  useEffect(() => {
+    if (showForwardModal) {
+      console.log("Forward modal opened, loading contacts...");
+      loadContacts();
+    }
   }, [showForwardModal, loadContacts]);
 
   // Scroll to bottom helper
@@ -253,7 +253,7 @@ useEffect(() => {
       />
     );
 
-      return (
+    return (
       <MessageBubble
         message={item}
         isMyMessage={isMyMsg}
@@ -304,73 +304,79 @@ useEffect(() => {
   const themeStyles = privacyMode ? darkTheme : lightTheme;
 
   return (
-    <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom }, themeStyles.safeArea]}>
+    <SafeAreaView style={[styles.safeArea, themeStyles.safeArea]} edges={['top']}>
       <KeyboardAvoidingView
-        style={[styles.container, themeStyles.container]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        style={styles.keyboardView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+        enabled={true}
       >
-        {/* Header */}
-        <ChatHeader
-          contactName={contactName}
-          receiverPhone={receiverPhone}
-          privacyMode={privacyMode}
-          onBackPress={() => router.back()}
-          onMenuPress={() => setShowClearChatModal(true)}
-          onPrivacyToggle={() => setPrivacyMode(!privacyMode)}
-          selectionMode={selectionMode}
-          selectedCount={selectedMessages.size}
-          onExitSelection={exitSelectionMode}
-          onSelectAll={selectAllMessages}
-          onForwardMessages={() => {
-            setContactSearch('');
-            loadContacts();
-            setShowForwardModal(true);
-          }}
-          onDeleteMessages={deleteSelectedMessages}
-          themeStyles={themeStyles}
-        />
+        <View style={[styles.container, themeStyles.container]}>
+          {/* Header */}
+          <ChatHeader
+            contactName={contactName}
+            receiverPhone={receiverPhone}
+            privacyMode={privacyMode}
+            onBackPress={() => router.back()}
+            onMenuPress={() => setShowClearChatModal(true)}
+            onPrivacyToggle={() => setPrivacyMode(!privacyMode)}
+            selectionMode={selectionMode}
+            selectedCount={selectedMessages.size}
+            onExitSelection={exitSelectionMode}
+            onSelectAll={selectAllMessages}
+            onForwardMessages={() => {
+              setContactSearch('');
+              loadContacts();
+              setShowForwardModal(true);
+            }}
+            onDeleteMessages={deleteSelectedMessages}
+            themeStyles={themeStyles}
+          />
 
-        {/* Messages */}
-        <FlatList
-          ref={messageRef}
-          data={messages}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingVertical: 8 }}
-          keyboardShouldPersistTaps="handled"
-          onContentSizeChange={scrollToBottom}
-          showsVerticalScrollIndicator={false}
-        />
+          {/* Messages */}
+          <FlatList
+            ref={messageRef}
+            data={messages}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.messagesList}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={scrollToBottom}
+            showsVerticalScrollIndicator={false}
+            maintainVisibleContentPosition={{
+              minIndexForVisible: 0,
+            }}
+          />
 
-        {/* Reply Banner */}
-        <ReplyBanner
-          replyMessage={replyToMessage || ''}
-          onCancelReply={() => setReplyToMessage(null)}
-        />
+          {/* Reply Banner */}
+          <ReplyBanner
+            replyMessage={replyToMessage || ''}
+            onCancelReply={() => setReplyToMessage(null)}
+          />
 
-        {/* Upload Progress */}
-        <UploadProgress visible={uploadingMedia} />
+          {/* Upload Progress */}
+          <UploadProgress visible={uploadingMedia} />
 
-        {/* Recording Indicator */}
-        <RecordingIndicator
-          recording={!!recording}
-          duration={recordingDuration}
-          pulseAnim={pulseAnim}
-        />
+          {/* Recording Indicator */}
+          <RecordingIndicator
+            recording={!!recording}
+            duration={recordingDuration}
+            pulseAnim={pulseAnim}
+          />
 
-        {/* Input */}
-        <MessageInput
-          input={input}
-          onInputChange={setInput}
-          onSendMessage={sendMessage}
-          onStartRecording={startRecording}
-          onStopRecording={() => stopRecording(uploadFileToSupabase)}
-          onMediaPress={handleMultimedia}
-          recording={!!recording}
-          uploadingMedia={uploadingMedia}
-          privacyMode={privacyMode}
-        />
+          {/* Input - This stays at bottom */}
+          <MessageInput
+            input={input}
+            onInputChange={setInput}
+            onSendMessage={sendMessage}
+            onStartRecording={startRecording}
+            onStopRecording={() => stopRecording(uploadFileToSupabase)}
+            onMediaPress={handleMultimedia}
+            recording={!!recording}
+            uploadingMedia={uploadingMedia}
+            privacyMode={privacyMode}
+          />
+        </View>
 
         {/* Modals */}
         <MediaModal
@@ -411,9 +417,17 @@ const styles = StyleSheet.create({
     flex: 1, 
     backgroundColor: '#dcd0a8' 
   },
+  keyboardView: {
+    flex: 1,
+  },
   container: { 
-  flex: 1,
-  paddingHorizontal: 12,
+    flex: 1,
+    paddingHorizontal: 12,
     backgroundColor: '#dcd0a8' 
+  },
+  messagesList: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+    paddingVertical: 8,
   },
 });
