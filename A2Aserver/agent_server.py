@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime
 from supabase import create_client, Client
-from userAgent import UserAgent
+from useragent import UserAgent
 from dotenv import load_dotenv
 
 load_dotenv()
